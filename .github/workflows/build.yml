@@ -1,4 +1,4 @@
-name: Build GhostMsg V8 (Hyper Stable)
+name: Build GhostMsg V9 (Resgate)
 
 on:
   push:
@@ -14,16 +14,16 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout do Código
         uses: actions/checkout@v3
 
-      - name: Setup Java 17
+      - name: Configurar Java 17
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Node 18
+      - name: Configurar Node.js 18
         uses: actions/setup-node@v3
         with:
           node-version: '18'
@@ -31,46 +31,66 @@ jobs:
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Construir App
+      - name: Construir App (Passo a Passo)
         run: |
+          echo ">>> 1. Criando Projeto..."
           cordova create temp_app com.kaua.messenger "GhostMsg"
           cd temp_app
           
-          # --- PLUGINS DE CORREÇÃO ---
-          # 1. Para matar o Robô (Splash)
-          cordova plugin add cordova-plugin-splashscreen
-          # 2. Para permissões do Android 10+
+          echo ">>> 2. Adicionando Plugins Essenciais..."
+          # Adicionamos um por um para evitar conflito
           cordova plugin add cordova-plugin-android-permissions
-          # 3. Notificações e Background
-          cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
           cordova plugin add cordova-plugin-background-mode
-          # 4. Arquivos
           cordova plugin add cordova-plugin-file
+          # O plugin de notificação as vezes trava o build se não tiver a variavel
+          cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
           
+          # Plugin Splashscreen (O que mata o robô)
+          cordova plugin add cordova-plugin-splashscreen
+
+          echo ">>> 3. Adicionando Plataforma Android..."
           cordova platform add android
-          
-          # Limpa e copia
+
+          echo ">>> 4. Copiando Arquivos do Usuário..."
           rm -rf www/*
           cp -r ../www/* www/
           if [ -f "../icon.png" ]; then cp ../icon.png www/icon.png; fi
 
-          # --- CONFIGURAÇÃO XML (Agressiva contra o Splash) ---
-          # Estas linhas forçam o Splash a ser desligado
+          echo ">>> 5. Configurando XML (Modo Seguro)..."
+          # Usamos configuração direta no config.xml sem quebrar a estrutura
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="AutoHideSplashScreen" value="true" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff111b21" />' config.xml
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
-          # Compila
-          cordova build android --debug -- --packageType=apk
+          echo ">>> 6. COMPILANDO (Isso deve demorar uns 4-5 min)..."
+          # Adicionei --verbose para vermos se der erro
+          cordova build android --debug --verbose -- --packageType=apk
+
+      - name: Caçar APK (Script de Rastreamento)
+        run: |
+          echo ">>> PROCURANDO O ARQUIVO APK..."
+          # Procura em todo o diretório temp_app
+          APK_PATH=$(find temp_app -name "*.apk" -type f | head -n 1)
+          
+          if [ -z "$APK_PATH" ]; then
+            echo "❌ ERRO CRÍTICO: O APK não foi gerado!"
+            echo "Listando arquivos para debug:"
+            find temp_app -maxdepth 4
+            exit 1
+          else
+            echo "✅ SUCESSO! APK encontrado em: $APK_PATH"
+            cp "$APK_PATH" GhostMsg-V9.apk
+          fi
 
       - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v8.0-stable
-          name: "GhostMsg V8 (Fix Loading & Splash)"
-          files: temp_app/platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          tag_name: v9.0-rescue
+          name: "GhostMsg V9 (Versão Resgate)"
+          body: "Se esta versão apareceu, o bug do build foi corrigido."
+          files: GhostMsg-V9.apk
+          draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
