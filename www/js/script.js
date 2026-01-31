@@ -1,215 +1,77 @@
-// --- DADOS E VARIÁVEIS ---
-let meuId = localStorage.getItem('ghost_my_id');
-let meuNick = localStorage.getItem('ghost_my_nick') || "Eu";
-let contatos = JSON.parse(localStorage.getItem('ghost_contacts') || "[]");
-let contatoAtual = null; // ID de quem estou conversando agora
-let peer = null;
-let conexoes = {}; // Guarda as conexões ativas
+// --- (MANTENHA O INÍCIO DO CÓDIGO IGUAL ATÉ A PARTE DE SETUP CONEXAO) ---
+// ... variáveis ... inicialização ...
 
-// --- INICIALIZAÇÃO ---
+// --- ATIVA O MODO PLANO DE FUNDO (NOVO) ---
+document.addEventListener('deviceready', function () {
+    // Pede permissão para notificar (Android 13+)
+    cordova.plugins.notification.local.requestPermission(function (granted) {
+        console.log('Permissão de notificação: ' + granted);
+    });
 
-// 1. Gera ID fixo se não existir
-if (!meuId) {
-    meuId = "Ghost-" + Math.floor(Math.random() * 999999);
-    localStorage.setItem('ghost_my_id', meuId);
-}
-
-// 2. Aplica Tema Salvo
-const temaSalvo = localStorage.getItem('ghost_theme');
-if (temaSalvo) document.body.className = temaSalvo;
-
-// 3. Inicia P2P
-iniciarPeer();
-renderizarContatos();
-document.getElementById('my-nickname').value = meuNick;
-document.getElementById('my-id-display').innerText = meuId;
-
-// --- FUNÇÕES DE NAVEGAÇÃO ---
-
-function irParaChat(contactId, contactName) {
-    contatoAtual = { id: contactId, name: contactName };
-    document.getElementById('current-chat-name').innerText = contactName;
-    document.getElementById('current-chat-id').innerText = contactId;
+    // Ativa modo background para não cair a conexão
+    cordova.plugins.backgroundMode.enable();
     
-    // Tenta conectar se não estiver conectado
-    if (!conexoes[contactId]) {
-        conectarP2P(contactId);
-    }
-
-    trocarTela('view-chat');
-    document.getElementById('messages-area').innerHTML = '<div class="msg received" style="background:transparent; text-align:center; opacity:0.5; width:100%">Início da conversa criptografada</div>';
-}
-
-function voltarHome() {
-    contatoAtual = null;
-    trocarTela('view-home');
-}
-
-function abrirConfig() {
-    trocarTela('view-settings');
-}
-
-function trocarTela(telaId) {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById(telaId).classList.add('active');
-}
-
-// --- LÓGICA DE CONTATOS ---
-
-function renderizarContatos() {
-    const lista = document.getElementById('contact-list');
-    lista.innerHTML = '';
-
-    if (contatos.length === 0) {
-        lista.innerHTML = '<div class="empty-state" style="text-align:center; padding:20px; opacity:0.6">Nenhum contato salvo.<br>Toque no +</div>';
-        return;
-    }
-
-    contatos.forEach(c => {
-        const item = document.createElement('div');
-        item.className = 'contact-item';
-        item.onclick = () => irParaChat(c.id, c.name);
-        
-        // Avatar com inicial
-        const inicial = c.name.charAt(0).toUpperCase();
-        
-        item.innerHTML = `
-            <div class="avatar">${inicial}</div>
-            <div class="contact-info">
-                <strong>${c.name}</strong>
-                <small>${c.id}</small>
-            </div>
-        `;
-        lista.appendChild(item);
+    // Configura o modo background para ser invisível se possível
+    cordova.plugins.backgroundMode.setDefaults({
+        title: "GhostMsg Ativo",
+        text: "Mantendo conexão segura...",
+        silent: true 
     });
-}
+}, false);
 
-function salvarNovoContato() {
-    const nome = document.getElementById('new-contact-name').value;
-    const id = document.getElementById('new-contact-id').value;
+// ... funções de navegação ...
 
-    if (nome && id) {
-        contatos.push({ name: nome, id: id });
-        localStorage.setItem('ghost_contacts', JSON.stringify(contatos));
-        renderizarContatos();
-        fecharModalAdd();
-        // Limpa inputs
-        document.getElementById('new-contact-name').value = '';
-        document.getElementById('new-contact-id').value = '';
-    } else {
-        alert("Preencha nome e ID!");
-    }
-}
-
-// --- REDE P2P (PEERJS) ---
-
-function iniciarPeer() {
-    peer = new Peer(meuId);
-
-    peer.on('open', (id) => {
-        console.log("Conectado na rede global como: " + id);
-    });
-
-    peer.on('connection', (conn) => {
-        setupConexao(conn);
-        alert("Nova conexão recebida!");
-    });
-
-    peer.on('error', (err) => {
-        if(err.type === 'peer-unavailable') {
-           // Ignora erro se usuário estiver offline, mensagem será tentada dps
-        }
-        console.error(err);
-    });
-}
-
-function conectarP2P(destId) {
-    const conn = peer.connect(destId);
-    setupConexao(conn);
-}
-
+// --- ATUALIZAÇÃO NA FUNÇÃO SETUP CONEXAO ---
 function setupConexao(conn) {
     conexoes[conn.peer] = conn;
 
-    conn.on('data', (data) => {
-        // Se a mensagem for de quem estou conversando agora, mostra na tela
-        if (contatoAtual && contatoAtual.id === conn.peer) {
-            adicionarBalao(data, 'received');
-        } else {
-            // Se não, poderia mostrar notificação (feature futura)
-            alert("Msg de " + conn.peer);
+    conn.on('open', () => {
+        if(contatoAtual && contatoAtual.id === conn.peer) {
+            document.querySelector('.chat-status').classList.add('online');
+            document.getElementById('current-chat-status').innerText = "Online";
         }
     });
-    
-    // Atualiza status se estiver no chat
-    if(contatoAtual && contatoAtual.id === conn.peer) {
-        document.getElementById('current-chat-id').innerText = "Conectado";
-    }
+
+    conn.on('data', (data) => {
+        // Lógica: Está na tela do chat com essa pessoa?
+        const estouNoChatDela = contatoAtual && contatoAtual.id === conn.peer;
+        
+        // Verifica se o app está em segundo plano (background)
+        const appEmBackground = cordova.plugins.backgroundMode.isActive();
+
+        if (estouNoChatDela && !appEmBackground) {
+            // Se estou vendo a tela, só mostra o balão
+            adicionarBalao(data, 'received');
+            somReceber.play().catch(e=>{});
+        } else {
+            // Se estou em outra tela OU com o app minimizado -> NOTIFICAÇÃO
+            enviarNotificacaoNativa(conn.peer, data);
+            
+            // Também mostra o Toast se estiver com o app aberto em outra tela
+            if(!appEmBackground) {
+                showToast(`Nova mensagem de ${conn.peer}`, 'success');
+            }
+        }
+    });
+    // ... resto do código ...
 }
 
-// --- MENSAGENS ---
+// --- NOVA FUNÇÃO PARA GERAR NOTIFICAÇÃO NA TELA DE BLOQUEIO ---
+function enviarNotificacaoNativa(remetenteId, texto) {
+    // Tenta achar o nome do contato pelo ID
+    let nomeExibicao = remetenteId;
+    const contatoSalvo = contatos.find(c => c.id === remetenteId);
+    if(contatoSalvo) nomeExibicao = contatoSalvo.name;
 
-function enviarMensagem() {
-    const input = document.getElementById('msg-input');
-    const texto = input.value.trim();
-    
-    if (!texto || !contatoAtual) return;
-
-    const conn = conexoes[contatoAtual.id];
-    
-    if (conn && conn.open) {
-        conn.send(texto);
-        adicionarBalao(texto, 'sent');
-        input.value = '';
-    } else {
-        // Tenta reconectar e enviar
-        conectarP2P(contatoAtual.id);
-        setTimeout(() => {
-             // Tenta de novo após 1s
-             const novaConn = conexoes[contatoAtual.id];
-             if(novaConn && novaConn.open) {
-                 novaConn.send(texto);
-                 adicionarBalao(texto, 'sent');
-                 input.value = '';
-             } else {
-                 alert("Usuário offline ou ID incorreto.");
-             }
-        }, 1500);
-    }
+    cordova.plugins.notification.local.schedule({
+        title: nomeExibicao,
+        text: texto,
+        foreground: true, // Mostra mesmo se o app estiver aberto
+        vibrate: true,
+        priority: 2, // Alta prioridade (Heads-up notification)
+        smallIcon: 'res://icon', // Usa o ícone do app
+        lockscreenVisibility: 'PUBLIC' // Aparece na tela de bloqueio
+    });
 }
 
-function adicionarBalao(texto, tipo) {
-    const area = document.getElementById('messages-area');
-    const div = document.createElement('div');
-    div.className = 'msg ' + tipo;
-    div.innerText = texto;
-    area.appendChild(div);
-    area.scrollTop = area.scrollHeight;
-}
-
-// --- SETTINGS E UTILITÁRIOS ---
-
-function salvarNickname() {
-    const novoNick = document.getElementById('my-nickname').value;
-    if(novoNick) {
-        localStorage.setItem('ghost_my_nick', novoNick);
-        meuNick = novoNick;
-        alert("Nome salvo!");
-    }
-}
-
-function mudarTema(nomeTema) {
-    document.body.className = ''; // Reseta
-    if (nomeTema === 'zap') document.body.classList.add('theme-zap');
-    if (nomeTema === 'matrix') document.body.classList.add('theme-matrix');
-    localStorage.setItem('ghost_theme', document.body.className);
-}
-
-function copiarID() {
-    navigator.clipboard.writeText(meuId);
-    alert("ID Copiado para área de transferência!");
-}
-
-// Modais
-function mostrarModalAdd() { document.getElementById('modal-add').classList.add('open'); }
-function fecharModalAdd() { document.getElementById('modal-add').classList.remove('open'); }
+// ... o resto das funções (enviarMensagem, renderizarContatos) continua igual ...
