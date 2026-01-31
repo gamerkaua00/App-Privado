@@ -1,4 +1,4 @@
-name: Build GhostMsg V9 (Resgate)
+name: Build GhostMsg V10 (Estável)
 
 on:
   push:
@@ -31,66 +31,61 @@ jobs:
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Construir App (Passo a Passo)
+      - name: Construir App (Modo Compatibilidade)
         run: |
           echo ">>> 1. Criando Projeto..."
           cordova create temp_app com.kaua.messenger "GhostMsg"
           cd temp_app
           
-          echo ">>> 2. Adicionando Plugins Essenciais..."
-          # Adicionamos um por um para evitar conflito
+          echo ">>> 2. Adicionando Plataforma Android 12 (ESTÁVEL)..."
+          # O SEGREDO: Usamos a v12.0.0 para aceitar plugins antigos
+          cordova platform add android@12.0.0
+
+          echo ">>> 3. Adicionando Plugins..."
+          # Agora que a plataforma existe, adicionamos os plugins
           cordova plugin add cordova-plugin-android-permissions
           cordova plugin add cordova-plugin-background-mode
           cordova plugin add cordova-plugin-file
-          # O plugin de notificação as vezes trava o build se não tiver a variavel
-          cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
-          
-          # Plugin Splashscreen (O que mata o robô)
           cordova plugin add cordova-plugin-splashscreen
+          # Fix para notificação
+          cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
 
-          echo ">>> 3. Adicionando Plataforma Android..."
-          cordova platform add android
-
-          echo ">>> 4. Copiando Arquivos do Usuário..."
+          echo ">>> 4. Copiando Arquivos KMZ..."
           rm -rf www/*
           cp -r ../www/* www/
           if [ -f "../icon.png" ]; then cp ../icon.png www/icon.png; fi
 
-          echo ">>> 5. Configurando XML (Modo Seguro)..."
-          # Usamos configuração direta no config.xml sem quebrar a estrutura
+          echo ">>> 5. Configurando XML (Sem Robô)..."
+          # Configurações para matar o splash screen
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="AutoHideSplashScreen" value="true" />' config.xml
+          sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff111b21" />' config.xml
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
-          echo ">>> 6. COMPILANDO (Isso deve demorar uns 4-5 min)..."
-          # Adicionei --verbose para vermos se der erro
-          cordova build android --debug --verbose -- --packageType=apk
+          echo ">>> 6. COMPILANDO..."
+          cordova build android --debug -- --packageType=apk
 
-      - name: Caçar APK (Script de Rastreamento)
+      - name: Rastrear APK
         run: |
-          echo ">>> PROCURANDO O ARQUIVO APK..."
-          # Procura em todo o diretório temp_app
+          echo "Procurando APK..."
+          find temp_app -name "*.apk"
           APK_PATH=$(find temp_app -name "*.apk" -type f | head -n 1)
           
           if [ -z "$APK_PATH" ]; then
-            echo "❌ ERRO CRÍTICO: O APK não foi gerado!"
-            echo "Listando arquivos para debug:"
-            find temp_app -maxdepth 4
+            echo "❌ ERRO: APK não gerado."
             exit 1
-          else
-            echo "✅ SUCESSO! APK encontrado em: $APK_PATH"
-            cp "$APK_PATH" GhostMsg-V9.apk
           fi
+          
+          cp "$APK_PATH" GhostMsg-V10.apk
 
       - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v9.0-rescue
-          name: "GhostMsg V9 (Versão Resgate)"
-          body: "Se esta versão apareceu, o bug do build foi corrigido."
-          files: GhostMsg-V9.apk
+          tag_name: v10.0-stable
+          name: "GhostMsg V10 (Android 12 Engine)"
+          body: "Versão com motor Android 12 para compatibilidade total de plugins."
+          files: GhostMsg-V10.apk
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
