@@ -3,146 +3,141 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GhostMsg Ultimate</title>
-    <link rel="stylesheet" href="css/style.css">
+    <title>EletroNIC Messenger - KMZ</title> <link rel="stylesheet" href="css/style.css">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
+    
+    <div id="splash-screen">
+        <div class="kmz-logo">KMZ</div>
+        <div class="loading-bar"><div class="bar-fill"></div></div>
+        <p>Equipe KMZ &copy; 2026</p>
+    </div>
+
+    <div id="image-viewer" onclick="fecharImagem()">
+        <button class="close-img-btn"><i class="material-icons">close</i></button>
+        <img id="img-full" src="" onclick="event.stopPropagation()"> </div>
 
     <div id="toast-container"></div>
     
-    <input type="file" id="file-input-img" accept="image/*" hidden onchange="processarArquivo(this, 'image')">
-    <input type="file" id="file-input-video" accept="video/*" hidden onchange="processarArquivo(this, 'video')">
-    <input type="file" id="bg-input" accept="image/*" hidden onchange="mudarWallpaper(this)">
+    <input type="file" id="file-input-any" hidden onchange="GerenciadorArquivos.selecionar(this)">
     <input type="file" id="avatar-input" accept="image/*" hidden onchange="mudarAvatar(this)">
 
     <div id="view-home" class="view active">
-        <div class="header glass">
+        <div class="header">
             <div class="header-left">
-                <div class="mini-avatar" onclick="abrirConfig()" id="home-avatar">?</div>
-                <span class="app-title">GhostMsg</span>
+                <span class="app-brand">KMZ <small>Messenger</small></span>
             </div>
             <div class="actions">
-                <i class="material-icons" onclick="abrirQR()">qr_code</i>
+                <i class="material-icons" onclick="abrirQR()">qr_code_scanner</i>
                 <i class="material-icons" onclick="abrirConfig()">settings</i>
             </div>
         </div>
-        
-        <div id="contact-list"></div>
 
-        <button class="fab ripple" onclick="mostrarModalAdd()">
-            <i class="material-icons">add</i>
-        </button>
+        <div class="tabs">
+            <div class="tab active" onclick="mudarAba('chats')">Conversas</div>
+            <div class="tab" onclick="mudarAba('groups')">Grupos</div>
+        </div>
+        
+        <div id="list-chats" class="list-container"></div>
+        <div id="list-groups" class="list-container" style="display:none">
+            <div class="btn-create-group" onclick="mostrarModalGrupo()">
+                <div class="icon-circle"><i class="material-icons">group_add</i></div>
+                <span>Criar Novo Grupo</span>
+            </div>
+            <div id="groups-container"></div>
+        </div>
+
+        <button class="fab" onclick="mostrarModalAdd()"><i class="material-icons">chat</i></button>
     </div>
 
     <div id="view-chat" class="view">
-        <div id="chat-wallpaper"></div>
-
-        <div class="header chat-header glass">
+        <div class="header chat-header">
             <button class="icon-btn" onclick="voltarHome()"><i class="material-icons">arrow_back</i></button>
-            <div class="chat-info">
-                <div class="chat-name" id="current-chat-name">Nome</div>
-                <div class="chat-status">
-                    <span id="status-dot"></span> <span id="current-chat-status">...</span>
+            <div class="chat-info" onclick="verInfoContato()">
+                <img id="chat-avatar-top" src="img/default.png" class="avatar-small">
+                <div class="chat-text">
+                    <div class="chat-name" id="current-chat-name">Nome</div>
+                    <div class="chat-status" id="current-chat-status">Visto por último...</div>
                 </div>
             </div>
-            <i class="material-icons" onclick="limparChatAtual()" style="font-size: 1.2rem; opacity: 0.7;">delete</i>
+            <i class="material-icons" id="btn-bomb" onclick="toggleModoBomba()">timer_off</i>
         </div>
 
         <div id="messages-area"></div>
+        
+        <div id="upload-bar"><div id="upload-progress"></div></div>
 
-        <div class="input-container glass-panel">
-            <button class="icon-btn" id="btn-attach" onclick="toggleAnexos()">
-                <i class="material-icons">attach_file</i>
+        <div class="input-container">
+            <button class="icon-btn" onclick="document.getElementById('file-input-any').click()">
+                <i class="material-icons" style="transform: rotate(45deg);">attach_file</i>
             </button>
-            
-            <input type="text" id="msg-input" placeholder="Mensagem..." autocomplete="off">
-            
-            <button class="send-btn-round" id="btn-action" onclick="acaoPrincipal()">
+            <input type="text" id="msg-input" placeholder="Mensagem" autocomplete="off">
+            <button class="send-btn" id="btn-action" onclick="acaoPrincipal()">
                 <i class="material-icons" id="icon-action">mic</i>
             </button>
-        </div>
-
-        <div id="attach-menu" class="glass-panel">
-            <div class="attach-item" onclick="document.getElementById('file-input-img').click()">
-                <i class="material-icons" style="color:#d32f2f">image</i> Foto
-            </div>
-            <div class="attach-item" onclick="document.getElementById('file-input-video').click()">
-                <i class="material-icons" style="color:#1976d2">videocam</i> Vídeo
-            </div>
-        </div>
-
-        <div id="audio-recorder" class="glass-panel">
-            <span id="record-timer">00:00</span>
-            <span class="record-status">Gravando...</span>
-            <button class="icon-btn" onclick="cancelarGravacao()" style="color:red"><i class="material-icons">delete</i></button>
-            <button class="icon-btn" onclick="enviarAudio()" style="color:#00ff88"><i class="material-icons">send</i></button>
         </div>
     </div>
 
     <div id="view-settings" class="view">
-        <div class="header glass">
-            <button class="icon-btn" onclick="voltarHome()"><i class="material-icons">arrow_back</i></button>
-            <span>Configurações</span>
-        </div>
+        <div class="header"><i class="material-icons" onclick="voltarHome()">arrow_back</i> Configurações</div>
         <div class="settings-content">
-            
-            <div class="profile-section">
+            <div class="profile-card">
                 <div class="big-avatar" id="settings-avatar" onclick="document.getElementById('avatar-input').click()">
-                    <i class="material-icons">camera_alt</i>
+                    <i class="material-icons">person</i>
                 </div>
                 <input type="text" id="my-nickname" placeholder="Seu Nome" onblur="salvarPerfil()">
-                <small>Toque na foto para alterar</small>
+                <div class="my-id-label" onclick="copiarID()">ID: <span id="my-id-display">...</span> <i class="material-icons" style="font-size:12px">content_copy</i></div>
             </div>
 
-            <div class="card glass-card">
-                <h3>Aparência</h3>
-                <div class="setting-row" onclick="document.getElementById('bg-input').click()">
-                    <span><i class="material-icons">wallpaper</i> Papel de Parede Chat</span>
-                    <i class="material-icons">chevron_right</i>
+            <div class="settings-list">
+                <div class="setting-item" onclick="toggleTema()">
+                    <i class="material-icons">dark_mode</i> <span>Tema Escuro/Claro</span>
                 </div>
-                <div class="setting-row">
-                    <span><i class="material-icons">palette</i> Tema Escuro</span>
-                    <input type="checkbox" id="toggle-theme" checked onchange="toggleTema(this)">
+                <div class="setting-item" onclick="limparCache()">
+                    <i class="material-icons">cleaning_services</i> <span>Limpar Conversas (Otimizar)</span>
                 </div>
-            </div>
-
-            <div class="card glass-card">
-                <h3>Dados e Armazenamento</h3>
-                <div class="setting-row">
-                    <span>Download Automático</span>
-                    <input type="checkbox" id="toggle-auto-dl" onchange="toggleAutoDownload(this)">
+                <div class="setting-item danger" onclick="resetarApp()">
+                    <i class="material-icons">delete_forever</i> <span>Resetar App</span>
                 </div>
             </div>
+        </div>
+    </div>
 
-            <div class="id-box" onclick="copiarID()">
-                <small>SEU ID (Toque para copiar)</small>
-                <div id="my-id-display">...</div>
+    <div id="modal-add" class="modal">
+        <div class="modal-content">
+            <h3>Novo Contato</h3>
+            <input type="text" id="new-contact-name" placeholder="Nome do Contato">
+            <input type="text" id="new-contact-id" placeholder="ID (Cole aqui)">
+            <div class="modal-footer">
+                <button onclick="fecharModalAdd()">Cancelar</button>
+                <button class="primary" onclick="salvarNovoContato()">Adicionar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-group" class="modal">
+        <div class="modal-content">
+            <h3>Novo Grupo</h3>
+            <input type="text" id="new-group-name" placeholder="Nome do Grupo (ex: Família)">
+            <p>Selecione os membros:</p>
+            <div id="group-members-selection">
+                </div>
+            <div class="modal-footer">
+                <button onclick="document.getElementById('modal-group').classList.remove('open')">Cancelar</button>
+                <button class="primary" onclick="criarGrupo()">Criar</button>
             </div>
         </div>
     </div>
 
     <div id="modal-qr" class="modal">
-        <div class="modal-card glass-card" style="text-align:center">
-            <h3>Seu QR Code</h3>
+        <div class="modal-content center">
+            <h3>Seu Código KMZ</h3>
             <div id="qrcode-container"></div>
-            <p>Peça para seu amigo escanear</p>
-            <button onclick="fecharModalQR()" class="fill-btn">Fechar</button>
-        </div>
-    </div>
-
-    <div id="modal-add" class="modal">
-        <div class="modal-card glass-card">
-            <h3>Novo Contato</h3>
-            <input type="text" id="new-contact-name" placeholder="Nome">
-            <input type="text" id="new-contact-id" placeholder="Cole o ID">
-            <div class="modal-actions">
-                <button onclick="fecharModalAdd()" class="text-btn">Cancelar</button>
-                <button onclick="salvarNovoContato()" class="fill-btn">Salvar</button>
-            </div>
-            <button onclick="adicionarEuMesmo()" class="self-chat-btn">Conversar Comigo Mesmo</button>
+            <p>Peça para escanearem para te adicionar</p>
+            <button onclick="document.getElementById('modal-qr').classList.remove('open')">Fechar</button>
         </div>
     </div>
 
