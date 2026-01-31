@@ -1,10 +1,13 @@
-name: Build Android APK (GhostMsg Fixed)
+name: Build & Release APK
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+
+permissions:
+  contents: write  # Permissão para criar a Release
 
 jobs:
   build:
@@ -14,73 +17,68 @@ jobs:
       - name: Checkout do Código
         uses: actions/checkout@v3
 
-      - name: Setup Node.js 18
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
       - name: Setup Java 17
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      # --- CRIAÇÃO ESTRUTURADA (IGUAL ELETRO NIC) ---
-      - name: Criar App Cordova
+      - name: Construir App
         run: |
-          # 1. Cria o projeto base
+          # Cria o projeto na pasta temporária
           cordova create temp_app com.kaua.messenger "GhostMsg"
-          
-          # 2. Entra na pasta
           cd temp_app
-          
-          # 3. Adiciona Android
           cordova platform add android
-
-      - name: Injetar Código e Configurações
-        run: |
-          echo "--- Copiando seus arquivos da pasta www ---"
-          # Limpa a pasta www padrão do cordova
-          rm -rf temp_app/www/*
-          # Copia o seu site para dentro
-          cp -r www/* temp_app/www/
           
-          # Copia o ícone se existir
-          if [ -f "icon.png" ]; then
-            echo "Ícone encontrado!"
-            cp icon.png temp_app/www/icon.png
+          # Copia seus arquivos (usando caminho relativo ../)
+          rm -rf www/*
+          cp -r ../www/* www/
+          
+          if [ -f "../icon.png" ]; then
+            cp ../icon.png www/icon.png
           fi
 
-          echo "--- Configurando config.xml (Estilo EletroNIC) ---"
-          # Aqui usamos o comando SED para editar o arquivo igual ao seu outro projeto
-          # Isso garante que o Cordova não se perca
-          
-          cd temp_app
-          
-          # Remove Splash Screen
+          # Ajustes no config.xml (Sem Splash, Cor Dark)
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
-          
-          # Configura cor de fundo (Dark)
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff0d1117" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="AndroidWindowSplashScreenBackground" value="#0d1117" />' config.xml
-
-          # Configura Ícone no XML
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
-      - name: Build APK (Debug)
-        run: |
-          cd temp_app
-          # Usamos DEBUG para não precisar de chaves secretas agora
+          # Compila o APK
           cordova build android --debug -- --packageType=apk
 
-      - name: Upload do APK
-        uses: actions/upload-artifact@v4
+      - name: (INFALÍVEL) Encontrar e Renomear APK
+        run: |
+          echo "Procurando APK em todo o sistema..."
+          # Encontra qualquer arquivo .apk gerado
+          APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
+          
+          if [ -z "$APK_PATH" ]; then
+            echo "ERRO: APK não encontrado!"
+            exit 1
+          fi
+          
+          echo "APK achado em: $APK_PATH"
+          # Move para a raiz com nome fixo
+          cp "$APK_PATH" GhostMsg-Latest.apk
+
+      - name: Publicar no GitHub Releases
+        uses: softprops/action-gh-release@v1
         with:
-          name: GhostMsg-App
-          # O asterisco duplo garante que ele ache o APK onde quer que esteja
-          path: temp_app/**/*.apk
+          tag_name: latest
+          name: "Versão Mais Recente (Automática)"
+          body: "Nova versão compilada automaticamente do GhostMsg."
+          files: GhostMsg-Latest.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
