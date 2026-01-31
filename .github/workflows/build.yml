@@ -13,7 +13,7 @@ jobs:
       - name: Checkout do Código
         uses: actions/checkout@v3
 
-      - name: Configurar Java (Atualizado para v17)
+      - name: Configurar Java 17
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
@@ -27,24 +27,31 @@ jobs:
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Criar Projeto Cordova
+      - name: Criar Projeto Cordova e Compilar
         run: |
+          echo "--- Criando App Temporário ---"
           cordova create temp_app com.kaua.messenger GhostMsg
-          # Copia os arquivos do seu repositório para a pasta do Cordova
-          cp -r www/* temp_app/www/
-          cp config.xml temp_app/
-          cp icon.png temp_app/
+          
+          echo "--- Copiando seus arquivos ---"
+          # O -r copia pastas e o -f força a substituição
+          cp -rf www/* temp_app/www/
+          cp -f config.xml temp_app/
+          cp -f icon.png temp_app/
           
           cd temp_app
           
-          # Adiciona plataforma Android
+          echo "--- Adicionando Android ---"
           cordova platform add android
           
-          # Compila o APK (Debug)
+          echo "--- Compilando APK ---"
           cordova build android --debug
+
+      - name: Listar Arquivos (Para Debug)
+        run: find temp_app -name "*.apk"
 
       - name: Upload do APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: temp_app/platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          # Os ** significam: procure em qualquer profundidade de pasta
+          path: temp_app/**/*.apk
