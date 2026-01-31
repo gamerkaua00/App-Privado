@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (Safe Mode)
 
 on:
   push:
@@ -13,23 +13,23 @@ jobs:
       - name: Checkout do Código
         uses: actions/checkout@v3
 
-      - name: Configurar Java 17
+      - name: Configurar Java 11 (Estável)
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '11'
 
       - name: Configurar Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '16'
 
       - name: Instalar Cordova
         run: npm install -g cordova
 
       - name: Criar Projeto e Compilar
         run: |
-          echo "--- 1. Criando App ---"
+          echo "--- 1. Criando App Temporário ---"
           cordova create temp_app com.kaua.messenger GhostMsg
           
           echo "--- 2. Copiando Arquivos ---"
@@ -39,25 +39,21 @@ jobs:
           
           cd temp_app
           
-          echo "--- 3. Adicionando Android ---"
-          cordova platform add android
+          echo "--- 3. Adicionando Android Versão 12 (Estável) ---"
+          # Usamos a v12 para evitar erros da v13 recente
+          cordova platform add android@12.0.0
           
-          echo "--- 4. Compilando APK (Forçando Type APK) ---"
-          # O comando extra depois dos traços força o Gradle a fazer APK
+          echo "--- 4. Compilando APK ---"
           cordova build android --debug -- --packageType=apk
 
-      - name: (DIAGNÓSTICO) Listar arquivos gerados
-        # Esse passo vai mostrar no log onde o arquivo foi parar
+      - name: (DIAGNÓSTICO) Listar Onde o APK foi parar
         run: |
-          echo "Listando pasta outputs:"
-          find temp_app -type f -name "*.apk"
-          find temp_app -type f -name "*.aab"
+          echo "Procurando arquivos .apk em todo o diretório..."
+          find . -name "*.apk"
 
-      - name: Upload do Artefato
+      - name: Upload do APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          # Procura tanto APK quanto AAB para garantir
-          path: |
-            temp_app/**/*.apk
-            temp_app/**/*.aab
+          # Procura o APK em qualquer lugar dentro da pasta temp_app
+          path: temp_app/**/*.apk
