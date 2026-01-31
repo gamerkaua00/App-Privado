@@ -1,4 +1,4 @@
-name: Build & Release APK
+name: Build & Release APK (GhostMsg Notifications)
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # Permissão para criar a Release
+  contents: write
 
 jobs:
   build:
@@ -31,14 +31,22 @@ jobs:
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Construir App
+      - name: Construir App com Plugins
         run: |
-          # Cria o projeto na pasta temporária
           cordova create temp_app com.kaua.messenger "GhostMsg"
           cd temp_app
+          
+          # --- AQUI ESTÁ O SEGREDO: PLUGINS ---
+          # Plugin para vibrar e notificar na barra de status
+          cordova plugin add cordova-plugin-local-notification
+          # Plugin para manter o app vivo em segundo plano
+          cordova plugin add cordova-plugin-background-mode
+          # Plugin para saber se o app está em primeiro ou segundo plano
+          cordova plugin add cordova-plugin-background-app
+          
           cordova platform add android
           
-          # Copia seus arquivos (usando caminho relativo ../)
+          # Copia seus arquivos
           rm -rf www/*
           cp -r ../www/* www/
           
@@ -46,39 +54,26 @@ jobs:
             cp ../icon.png www/icon.png
           fi
 
-          # Ajustes no config.xml (Sem Splash, Cor Dark)
+          # Configurações Visuais
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff0d1117" />' config.xml
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
-          # Compila o APK
+          # Compila
           cordova build android --debug -- --packageType=apk
 
-      - name: (INFALÍVEL) Encontrar e Renomear APK
+      - name: Encontrar e Renomear APK
         run: |
-          echo "Procurando APK em todo o sistema..."
-          # Encontra qualquer arquivo .apk gerado
           APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
-          
-          if [ -z "$APK_PATH" ]; then
-            echo "ERRO: APK não encontrado!"
-            exit 1
-          fi
-          
-          echo "APK achado em: $APK_PATH"
-          # Move para a raiz com nome fixo
-          cp "$APK_PATH" GhostMsg-Latest.apk
+          if [ -z "$APK_PATH" ]; then exit 1; fi
+          cp "$APK_PATH" GhostMsg-V4.apk
 
-      - name: Publicar no GitHub Releases
+      - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: latest
-          name: "Versão Mais Recente (Automática)"
-          body: "Nova versão compilada automaticamente do GhostMsg."
-          files: GhostMsg-Latest.apk
+          tag_name: v4.0
+          name: "GhostMsg V4 (Com Notificações)"
+          files: GhostMsg-V4.apk
           draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
