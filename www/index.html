@@ -1,91 +1,102 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-br">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width">
-    <title>GhostMsg 2.0</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GhostMsg Titanium</title>
     <link rel="stylesheet" href="css/style.css">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
 <body>
 
+    <div id="toast-container"></div>
+
+    <audio id="sound-sent" src="https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3"></audio>
+    <audio id="sound-received" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3"></audio>
+
     <div id="view-home" class="view active">
-        <div class="header">
-            <span class="app-title">GhostMsg</span>
+        <div class="header glass">
+            <span class="app-title">GhostMsg <span class="badge">V3</span></span>
             <div class="actions">
                 <i class="material-icons" onclick="abrirConfig()">settings</i>
             </div>
         </div>
         
         <div id="contact-list">
-            <div class="empty-state">Nenhum contato salvo.<br>Toque no + para adicionar.</div>
-        </div>
+            </div>
 
-        <button class="fab" onclick="mostrarModalAdd()">
+        <button class="fab ripple" onclick="mostrarModalAdd()">
             <i class="material-icons">add</i>
         </button>
     </div>
 
     <div id="view-chat" class="view">
-        <div class="header chat-header">
-            <i class="material-icons back-btn" onclick="voltarHome()">arrow_back</i>
+        <div class="header chat-header glass">
+            <button class="icon-btn" onclick="voltarHome()"><i class="material-icons">arrow_back</i></button>
             <div class="chat-info">
-                <div class="chat-name" id="current-chat-name">Nome do Amigo</div>
-                <div class="chat-status" id="current-chat-id">Desconectado</div>
+                <div class="chat-name" id="current-chat-name">Nome</div>
+                <div class="chat-status">
+                    <span id="status-dot"></span> <span id="current-chat-status">Aguardando...</span>
+                </div>
             </div>
         </div>
 
         <div id="messages-area">
             </div>
 
-        <div class="input-area">
-            <input type="text" id="msg-input" placeholder="Mensagem..." autocomplete="off">
-            <button class="send-btn" onclick="enviarMensagem()">
+        <div class="input-container glass-panel">
+            <input type="text" id="msg-input" placeholder="Digite sua mensagem..." autocomplete="off">
+            <button class="send-btn-round" onclick="enviarMensagem()">
                 <i class="material-icons">send</i>
             </button>
         </div>
     </div>
 
     <div id="view-settings" class="view">
-        <div class="header">
-            <i class="material-icons back-btn" onclick="voltarHome()">arrow_back</i>
-            <span>Configurações</span>
+        <div class="header glass">
+            <button class="icon-btn" onclick="voltarHome()"><i class="material-icons">arrow_back</i></button>
+            <span>Ajustes</span>
         </div>
         <div class="settings-content">
-            <div class="card">
-                <h3>Meu Perfil</h3>
-                <label>Meu Apelido</label>
-                <input type="text" id="my-nickname" placeholder="Seu Nome">
-                <button onclick="salvarNickname()">Salvar Nome</button>
-                
-                <hr>
-                
-                <label>Meu ID Privado (Toque para copiar)</label>
-                <div id="my-id-display" onclick="copiarID()">Carregando...</div>
+            <div class="card glass-card">
+                <h3><i class="material-icons">person</i> Identidade</h3>
+                <div class="input-group">
+                    <label>Seu Apelido</label>
+                    <input type="text" id="my-nickname">
+                </div>
+                <div class="id-box" onclick="copiarID()">
+                    <small>SEU ID (Toque para copiar)</small>
+                    <div id="my-id-display">...</div>
+                </div>
+                <button class="btn-full" onclick="salvarNickname()">Salvar Alterações</button>
             </div>
 
-            <div class="card">
-                <h3>Aparência</h3>
-                <div class="theme-options">
-                    <button class="theme-btn" onclick="mudarTema('cyber')" style="background:#0d1117; color:#58a6ff">Cyber</button>
-                    <button class="theme-btn" onclick="mudarTema('zap')" style="background:#00a884; color:white">Zap</button>
-                    <button class="theme-btn" onclick="mudarTema('matrix')" style="background:black; color:#0f0">Matrix</button>
+            <div class="card glass-card">
+                <h3><i class="material-icons">palette</i> Temas</h3>
+                <div class="theme-grid">
+                    <div class="theme-opt" onclick="mudarTema('cyber')" style="background:#0d1117; border:1px solid #58a6ff"></div>
+                    <div class="theme-opt" onclick="mudarTema('zap')" style="background:#00a884; border:1px solid white"></div>
+                    <div class="theme-opt" onclick="mudarTema('midnight')" style="background:#000; border:1px solid #666"></div>
                 </div>
+            </div>
+            
+            <div class="card glass-card danger-zone">
+                <button class="btn-danger" onclick="limparTudo()">Apagar Todos os Dados</button>
             </div>
         </div>
     </div>
 
     <div id="modal-add" class="modal">
-        <div class="modal-content">
+        <div class="modal-card glass-card">
             <h3>Novo Contato</h3>
-            <input type="text" id="new-contact-name" placeholder="Nome (ex: João)">
+            <input type="text" id="new-contact-name" placeholder="Nome do Amigo">
             <input type="text" id="new-contact-id" placeholder="Cole o ID dele aqui">
             <div class="modal-actions">
-                <button onclick="fecharModalAdd()" class="btn-cancel">Cancelar</button>
-                <button onclick="salvarNovoContato()" class="btn-save">Salvar</button>
+                <button onclick="fecharModalAdd()" class="text-btn">Cancelar</button>
+                <button onclick="salvarNovoContato()" class="fill-btn">Adicionar</button>
             </div>
+            <button onclick="adicionarEuMesmo()" class="self-chat-btn">Conversar Comigo Mesmo (Teste)</button>
         </div>
     </div>
 
