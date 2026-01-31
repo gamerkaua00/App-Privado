@@ -27,31 +27,37 @@ jobs:
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Criar Projeto Cordova e Compilar
+      - name: Criar Projeto e Compilar
         run: |
-          echo "--- Criando App Temporário ---"
+          echo "--- 1. Criando App ---"
           cordova create temp_app com.kaua.messenger GhostMsg
           
-          echo "--- Copiando seus arquivos ---"
-          # O -r copia pastas e o -f força a substituição
+          echo "--- 2. Copiando Arquivos ---"
           cp -rf www/* temp_app/www/
           cp -f config.xml temp_app/
           cp -f icon.png temp_app/
           
           cd temp_app
           
-          echo "--- Adicionando Android ---"
+          echo "--- 3. Adicionando Android ---"
           cordova platform add android
           
-          echo "--- Compilando APK ---"
-          cordova build android --debug
+          echo "--- 4. Compilando APK (Forçando Type APK) ---"
+          # O comando extra depois dos traços força o Gradle a fazer APK
+          cordova build android --debug -- --packageType=apk
 
-      - name: Listar Arquivos (Para Debug)
-        run: find temp_app -name "*.apk"
+      - name: (DIAGNÓSTICO) Listar arquivos gerados
+        # Esse passo vai mostrar no log onde o arquivo foi parar
+        run: |
+          echo "Listando pasta outputs:"
+          find temp_app -type f -name "*.apk"
+          find temp_app -type f -name "*.aab"
 
-      - name: Upload do APK
+      - name: Upload do Artefato
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          # Os ** significam: procure em qualquer profundidade de pasta
-          path: temp_app/**/*.apk
+          # Procura tanto APK quanto AAB para garantir
+          path: |
+            temp_app/**/*.apk
+            temp_app/**/*.aab
