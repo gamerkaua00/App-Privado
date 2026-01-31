@@ -1,4 +1,4 @@
-name: Build Android APK (Safe Mode)
+name: Build Android APK (Final)
 
 on:
   push:
@@ -13,16 +13,16 @@ jobs:
       - name: Checkout do Código
         uses: actions/checkout@v3
 
-      - name: Configurar Java 11 (Estável)
+      - name: Configurar Java 17 (Obrigatório para Gradle 9.3)
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '17'
 
       - name: Configurar Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16'
+          node-version: '18'
 
       - name: Instalar Cordova
         run: npm install -g cordova
@@ -39,21 +39,32 @@ jobs:
           
           cd temp_app
           
-          echo "--- 3. Adicionando Android Versão 12 (Estável) ---"
-          # Usamos a v12 para evitar erros da v13 recente
-          cordova platform add android@12.0.0
+          echo "--- 3. Adicionando Android ---"
+          # Usando a versão mais recente compatível com Java 17
+          cordova platform add android@13.0.0
           
           echo "--- 4. Compilando APK ---"
           cordova build android --debug -- --packageType=apk
 
-      - name: (DIAGNÓSTICO) Listar Onde o APK foi parar
+      - name: (IMPORTANTE) Caçar e Mover APK
         run: |
-          echo "Procurando arquivos .apk em todo o diretório..."
-          find . -name "*.apk"
+          echo "Procurando APK gerado..."
+          # Encontra o arquivo .apk em qualquer subpasta
+          APK_PATH=$(find temp_app -name "*.apk" | head -n 1)
+          
+          if [ -z "$APK_PATH" ]; then
+            echo "ERRO: Nenhum APK foi encontrado!"
+            # Lista arquivos para debug se falhar
+            ls -R temp_app
+            exit 1
+          else
+            echo "Sucesso! APK encontrado em: $APK_PATH"
+            mkdir saida_final
+            cp "$APK_PATH" saida_final/GhostMsg.apk
+          fi
 
       - name: Upload do APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          # Procura o APK em qualquer lugar dentro da pasta temp_app
-          path: temp_app/**/*.apk
+          name: MeuApp-Privado
+          path: saida_final/GhostMsg.apk
