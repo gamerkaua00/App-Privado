@@ -1,10 +1,14 @@
-name: Build GhostMsg V11 (Golden Era)
+name: Build GhostMsg V12 (Diamond Fix)
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+
+# ISSO AQUI CONSERTA TUDO: Forçamos o Gradle 8.0 que é compatível com tudo
+env:
+  CORDOVA_ANDROID_GRADLE_DISTRIBUTION_URL: https://services.gradle.org/distributions/gradle-8.0-all.zip
 
 permissions:
   contents: write
@@ -17,16 +21,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Setup Java 11 (Clássico)
+      - name: Setup Java 17 (Obrigatório agora)
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '17'
 
-      - name: Setup Node 16 (Estável)
+      - name: Setup Node 18
         uses: actions/setup-node@v3
         with:
-          node-version: '16'
+          node-version: '18'
 
       - name: Instalar Cordova
         run: npm install -g cordova
@@ -37,19 +41,19 @@ jobs:
           cordova create temp_app com.kaua.messenger "GhostMsg"
           cd temp_app
           
-          echo ">>> 2. Adicionando Android 11 (Compatibilidade Máxima)..."
-          # Versão 11 aceita todos os plugins sem choro
-          cordova platform add android@11.0.0
+          echo ">>> 2. Adicionando Android 12 (Compatível)..."
+          cordova platform add android@12.0.0
 
           echo ">>> 3. Instalando Plugins..."
-          # Este plugin evita erros de compilação misturando bibliotecas
+          # AndroidX Adapter evita conflitos de bibliotecas
           cordova plugin add cordova-plugin-androidx-adapter
           
           cordova plugin add cordova-plugin-android-permissions
           cordova plugin add cordova-plugin-background-mode
           cordova plugin add cordova-plugin-file
           cordova plugin add cordova-plugin-splashscreen
-          cordova plugin add cordova-plugin-local-notification
+          # Fix para notificação
+          cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
 
           echo ">>> 4. Copiando Arquivos KMZ..."
           rm -rf www/*
@@ -57,17 +61,15 @@ jobs:
           if [ -f "../icon.png" ]; then cp ../icon.png www/icon.png; fi
 
           echo ">>> 5. Matando o Robô do Splash..."
-          # No Android 11, essas configs funcionam perfeitamente
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="AutoHideSplashScreen" value="true" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="SplashMaintainAspectRatio" value="true" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff111b21" />' config.xml
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
-          echo ">>> 6. COMPILANDO..."
-          # --release geralmente é mais otimizado, mas vamos de debug para garantir que assina sozinho
+          echo ">>> 6. COMPILANDO (Com Gradle 8.0)..."
+          # O build vai baixar o Gradle 8.0 automaticamente por causa da variável lá em cima
           cordova build android --debug -- --packageType=apk
 
       - name: Rastrear APK
@@ -76,21 +78,20 @@ jobs:
           APK_PATH=$(find temp_app -name "*.apk" -type f | head -n 1)
           
           if [ -z "$APK_PATH" ]; then
-            echo "❌ ERRO: APK não gerado. Logs abaixo:"
-            ls -R temp_app
+            echo "❌ ERRO: APK não gerado. Verifique os logs acima."
             exit 1
           fi
           
           echo "✅ APK ENCONTRADO: $APK_PATH"
-          cp "$APK_PATH" GhostMsg-V11.apk
+          cp "$APK_PATH" GhostMsg-V12.apk
 
       - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v11.0-golden
-          name: "GhostMsg V11 (Golden Build)"
-          body: "Versão construída sobre Android 11 para estabilidade total de plugins."
-          files: GhostMsg-V11.apk
+          tag_name: v12.0-diamond
+          name: "GhostMsg V12 (Fixed Gradle)"
+          body: "Versão com correção definitiva do motor de build (Gradle 8.0 + Java 17)."
+          files: GhostMsg-V12.apk
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
