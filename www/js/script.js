@@ -1,251 +1,157 @@
 // ======================================================
-// GHOSTMSG V7 - KMZ ULTIMATE EDITION
+// GHOSTMSG V8 - HYPER STABLE CORE
 // ======================================================
 
-// --- ESTADO GLOBAL ---
+// --- SAFETY FIRST: REMOÇÃO DO SPLASH ---
+// Garante que o loading saia em 3s, mesmo com erro
+setTimeout(() => {
+    const splash = document.getElementById('splash-screen');
+    if(splash) {
+        splash.style.opacity = '0';
+        setTimeout(() => splash.style.display = 'none', 500);
+    }
+    // Esconde o robô do Cordova se ainda estiver lá
+    if(navigator.splashscreen) navigator.splashscreen.hide();
+}, 3000);
+
+// --- ESTADO ---
 let meuId = localStorage.getItem('kmz_id');
-let meuNome = localStorage.getItem('kmz_name') || "Usuário KMZ";
+let meuNome = localStorage.getItem('kmz_name') || "Eu";
 let contatos = JSON.parse(localStorage.getItem('kmz_contacts') || "[]");
-let grupos = JSON.parse(localStorage.getItem('kmz_groups') || "[]");
 let peer = null;
 let conexoes = {};
-let chatAtual = null; // { id, tipo: 'p2p' ou 'grupo' }
+let chatAtual = null;
 let modoBomba = false;
 
-// Configuração de BD para não travar
-const DB_NAME = 'KMZ_DB';
-let db;
-
 // --- INICIALIZAÇÃO ---
-async function init() {
-    // Splash Screen
-    setTimeout(() => {
-        document.getElementById('splash-screen').style.opacity = 0;
-        setTimeout(() => document.getElementById('splash-screen').style.display = 'none', 500);
-    }, 2000);
-
+function init() {
     if (!meuId) {
-        meuId = "KMZ-" + Math.floor(Math.random() * 9999999);
+        meuId = "User-" + Math.floor(Math.random() * 999999);
         localStorage.setItem('kmz_id', meuId);
     }
 
     document.getElementById('my-id-display').innerText = meuId;
     document.getElementById('my-nickname').value = meuNome;
 
-    await initDB();
     renderizarListas();
     iniciarPeer();
 
-    // Monitora Digitação
+    // Listener de Digitação
     document.getElementById('msg-input').addEventListener('input', (e) => {
         const btn = document.getElementById('icon-action');
         btn.innerText = e.target.value.trim().length > 0 ? "send" : "mic";
     });
 }
 
-// --- BANCO DE DADOS (IndexedDB) ---
-function initDB() {
-    return new Promise(resolve => {
-        const req = indexedDB.open(DB_NAME, 2);
-        req.onupgradeneeded = e => {
-            db = e.target.result;
-            if(!db.objectStoreNames.contains('msgs')) {
-                const s = db.createObjectStore('msgs', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('chatId', 'chatId', { unique: false });
-            }
-        };
-        req.onsuccess = e => { db = e.target.result; resolve(); };
-    });
-}
+document.addEventListener('deviceready', () => {
+    // 1. Pedir Permissões
+    if (cordova.plugins.permissions) {
+        const list = [
+            cordova.plugins.permissions.RECORD_AUDIO,
+            cordova.plugins.permissions.WRITE_EXTERNAL_STORAGE,
+            cordova.plugins.permissions.READ_EXTERNAL_STORAGE
+        ];
+        cordova.plugins.permissions.requestPermissions(list, null, null);
+    }
+    // 2. Background
+    if(cordova.plugins.backgroundMode) {
+        cordova.plugins.backgroundMode.enable();
+        cordova.plugins.backgroundMode.disableWebViewOptimizations();
+    }
+    // 3. Notificações
+    if(cordova.plugins.notification) {
+        cordova.plugins.notification.local.requestPermission();
+    }
+}, false);
 
-function salvarMsgDB(msg) {
-    if(!db) return;
-    const tx = db.transaction(['msgs'], 'readwrite');
-    tx.objectStore('msgs').add(msg);
-}
+init();
 
-function carregarHistorico(chatId) {
-    document.getElementById('messages-area').innerHTML = ''; // Limpa tela
-    if(!db) return;
-    
-    const tx = db.transaction(['msgs'], 'readonly');
-    const store = tx.objectStore('msgs');
-    const index = store.index('chatId');
-    const req = index.getAll(chatId);
-    
-    req.onsuccess = () => {
-        const msgs = req.result;
-        // OTIMIZAÇÃO: Se tiver mais de 50 msgs, renderiza só as ultimas
-        const ultimas = msgs.slice(-50); 
-        ultimas.forEach(m => adicionarBalaoUI(m, m.remetente === meuId ? 'sent' : 'received'));
-        rolarFim();
-    };
-}
-
-// --- REDE P2P ---
+// --- P2P ---
 function iniciarPeer() {
     peer = new Peer(meuId);
     peer.on('open', () => console.log('Online'));
     peer.on('connection', conn => {
-        conectar(conn);
-        showToast("Nova conexão!", "success");
+        conexoes[conn.peer] = conn;
+        conn.on('data', data => receberMsg(data, conn.peer));
+        showToast("Nova Conexão!");
     });
-    peer.on('error', e => console.log(e));
+    peer.on('error', e => console.log("Peer Erro:", e));
 }
 
-function conectar(conn) {
-    conexoes[conn.peer] = conn;
-    conn.on('data', data => receberPacote(data, conn.peer));
+function conectar(id) {
+    if(conexoes[id]) return;
+    const conn = peer.connect(id);
+    conn.on('open', () => conexoes[id] = conn);
+    conn.on('data', data => receberMsg(data, id));
 }
 
-// --- MENSAGENS E GRUPOS ---
+// --- MENSAGENS ---
 function acaoPrincipal() {
     const input = document.getElementById('msg-input');
     const txt = input.value.trim();
     if(txt) {
-        enviarMensagem(txt, 'text');
+        enviarMsg('text', txt);
         input.value = '';
         document.getElementById('icon-action').innerText = "mic";
     } else {
-        alert("Segure para gravar áudio (Em breve)");
+        alert("Gravação de áudio em breve...");
     }
 }
 
-function enviarMensagem(conteudo, tipo) {
+function enviarMsg(tipo, conteudo) {
     if(!chatAtual) return;
-
+    
     const msg = {
-        chatId: chatAtual.id,
-        remetente: meuId,
-        nomeRemetente: meuNome,
         tipo: tipo,
         conteudo: conteudo,
-        data: new Date().getTime(),
-        bomba: modoBomba
+        bomba: modoBomba,
+        data: new Date().getTime()
     };
 
-    // 1. Mostra na minha tela e salva
-    adicionarBalaoUI(msg, 'sent');
-    salvarMsgDB(msg);
+    // UI
+    adicionarBalao(msg, 'sent');
 
-    // 2. Envia
-    if (chatAtual.tipo === 'p2p') {
-        // Envio Direto
-        enviarP2P(chatAtual.id, msg);
-    } else {
-        // Envio GRUPO (Multicast)
-        const grupo = grupos.find(g => g.id === chatAtual.id);
-        if(grupo) {
-            grupo.membros.forEach(membroId => {
-                if(membroId !== meuId) enviarP2P(membroId, msg);
-            });
-        }
-    }
-    rolarFim();
-}
-
-function enviarP2P(destId, msg) {
-    const conn = conexoes[destId];
-    if (conn && conn.open) {
+    // Envio
+    const conn = conexoes[chatAtual.id];
+    if(conn && conn.open) {
         conn.send(msg);
     } else {
-        // Tenta reconectar
-        const novaConn = peer.connect(destId);
-        novaConn.on('open', () => {
-            conexoes[destId] = novaConn;
-            novaConn.send(msg);
-        });
+        conectar(chatAtual.id);
+        setTimeout(() => {
+            if(conexoes[chatAtual.id]) conexoes[chatAtual.id].send(msg);
+        }, 1500);
     }
 }
 
-function receberPacote(msg, senderId) {
-    // Salva no DB
-    salvarMsgDB(msg);
-
-    // Se estiver no chat aberto, mostra
-    if (chatAtual && chatAtual.id === msg.chatId) {
-        adicionarBalaoUI(msg, 'received');
-        rolarFim();
+function receberMsg(msg, senderId) {
+    if(chatAtual && chatAtual.id === senderId) {
+        adicionarBalao(msg, 'received');
     } else {
-        showToast(`Mensagem de ${msg.nomeRemetente}`, "success");
+        showToast("Nova mensagem recebida!");
     }
 }
 
-// --- INTERFACE ---
-function adicionarBalaoUI(msg, lado) {
+// --- UI HELPERS ---
+function adicionarBalao(msg, lado) {
     const area = document.getElementById('messages-area');
     const div = document.createElement('div');
     div.className = `msg ${lado}`;
     
-    let conteudoHtml = msg.conteudo;
-    
-    // Tratamento de Imagem
+    let html = msg.conteudo;
     if(msg.tipo === 'image') {
-        conteudoHtml = `<img src="${msg.conteudo}" onclick="abrirImagem(this.src)">`;
+        html = `<img src="${msg.conteudo}" onclick="abrirImagem(this.src)">`;
     }
-
-    // Bomba
+    
     if(msg.bomba) {
-        setTimeout(() => { div.innerHTML = "<i>Mensagem apagada</i>"; div.style.opacity = 0.5; }, 10000);
-        conteudoHtml += " <small>⏱ 10s</small>";
-    }
-
-    // Nome no Grupo
-    let header = "";
-    if(lado === 'received' && chatAtual.tipo === 'group') {
-        header = `<div style="font-size:0.8rem;color:orange;margin-bottom:2px">${msg.nomeRemetente}</div>`;
+        setTimeout(() => { div.innerHTML = "<i>Apagada</i>"; div.style.opacity = 0.5; }, 10000);
+        html += " <small>⏱ 10s</small>";
     }
 
     const hora = new Date(msg.data).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    div.innerHTML = `${header}${conteudoHtml}<span class="msg-time">${hora}</span>`;
+    div.innerHTML = `${html}<span class="msg-time">${hora}</span>`;
     
     area.appendChild(div);
-}
-
-// --- GRUPOS (Lógica KMZ) ---
-function criarGrupo() {
-    const nome = document.getElementById('new-group-name').value;
-    // Pega membros selecionados
-    const checkboxes = document.querySelectorAll('.member-check:checked');
-    const membros = Array.from(checkboxes).map(cb => cb.value);
-    
-    if(!nome || membros.length === 0) return alert("Defina nome e membros");
-    
-    membros.push(meuId); // Eu sou membro
-    
-    const novoGrupo = {
-        id: "Group-" + Math.floor(Math.random() * 1000000),
-        name: nome,
-        membros: membros,
-        admin: meuId
-    };
-    
-    grupos.push(novoGrupo);
-    localStorage.setItem('kmz_groups', JSON.stringify(grupos));
-    
-    // Avisa os membros que o grupo foi criado (Protocolo simples)
-    membros.forEach(m => {
-        if(m !== meuId) {
-            enviarP2P(m, {
-                tipo: 'system_group_create',
-                grupo: novoGrupo
-            });
-        }
-    });
-    
-    renderizarListas();
-    document.getElementById('modal-group').classList.remove('open');
-}
-
-// --- LIGHTBOX (Imagem Cheia) ---
-function abrirImagem(src) {
-    const viewer = document.getElementById('image-viewer');
-    const img = document.getElementById('img-full');
-    img.src = src;
-    viewer.classList.add('active');
-}
-function fecharImagem() {
-    document.getElementById('image-viewer').classList.remove('active');
+    area.scrollTop = area.scrollHeight;
 }
 
 // --- ARQUIVOS ---
@@ -254,75 +160,35 @@ const GerenciadorArquivos = {
         const file = input.files[0];
         if(!file) return;
         
-        // Se for imagem, converte pra base64 e exibe
         if(file.type.startsWith('image/')) {
             const reader = new FileReader();
-            reader.onload = e => enviarMensagem(e.target.result, 'image');
+            reader.onload = e => enviarMsg('image', e.target.result);
             reader.readAsDataURL(file);
         } else {
-            enviarMensagem(`Arquivo: ${file.name}`, 'text');
+            enviarMsg('text', `Arquivo: ${file.name}`);
         }
-        input.value = '';
     }
-}
+};
 
-// --- UTILITÁRIOS ---
+// --- LIGHTBOX ---
+function abrirImagem(src) {
+    const v = document.getElementById('image-viewer');
+    document.getElementById('img-full').src = src;
+    v.classList.add('open');
+}
+function fecharImagem() { document.getElementById('image-viewer').classList.remove('open'); }
+
+// --- CONTATOS ---
 function renderizarListas() {
-    const listChats = document.getElementById('list-chats');
-    const listGroups = document.getElementById('list-groups');
-    const containerGroups = document.getElementById('groups-container');
-    
-    listChats.innerHTML = '';
-    containerGroups.innerHTML = '';
-
-    // Renderiza Contatos
+    const list = document.getElementById('list-chats');
+    list.innerHTML = '';
     contatos.forEach(c => {
         const d = document.createElement('div');
         d.className = 'contact-item';
-        d.onclick = () => abrirChat(c.id, c.name, 'p2p');
+        d.onclick = () => abrirChat(c.id, c.name);
         d.innerHTML = `<div class="item-avatar">${c.name[0]}</div><div class="item-info"><h4>${c.name}</h4><p>Toque para conversar</p></div>`;
-        listChats.appendChild(d);
+        list.appendChild(d);
     });
-
-    // Renderiza Grupos
-    grupos.forEach(g => {
-        const d = document.createElement('div');
-        d.className = 'contact-item';
-        d.onclick = () => abrirChat(g.id, g.name, 'group');
-        d.innerHTML = `<div class="item-avatar" style="background:orange"><i class="material-icons">group</i></div><div class="item-info"><h4>${g.name}</h4><p>${g.membros.length} membros</p></div>`;
-        containerGroups.appendChild(d);
-    });
-}
-
-function abrirChat(id, nome, tipo) {
-    chatAtual = { id, name: nome, tipo };
-    document.getElementById('current-chat-name').innerText = nome;
-    document.getElementById('current-chat-status').innerText = tipo === 'group' ? 'Grupo KMZ' : 'Online';
-    carregarHistorico(id);
-    trocarTela('view-chat');
-}
-
-function mostrarModalGrupo() {
-    const container = document.getElementById('group-members-selection');
-    container.innerHTML = '';
-    contatos.forEach(c => {
-        container.innerHTML += `<div class="checkbox-item"><input type="checkbox" class="member-check" value="${c.id}"> ${c.name}</div>`;
-    });
-    document.getElementById('modal-group').classList.add('open');
-}
-
-// Navegação
-function mudarAba(aba) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.list-container').forEach(l => l.style.display = 'none');
-    
-    if(aba === 'chats') {
-        document.querySelector('.tab:nth-child(1)').classList.add('active');
-        document.getElementById('list-chats').style.display = 'block';
-    } else {
-        document.querySelector('.tab:nth-child(2)').classList.add('active');
-        document.getElementById('list-groups').style.display = 'block';
-    }
 }
 
 function salvarNovoContato() {
@@ -334,13 +200,39 @@ function salvarNovoContato() {
     fecharModalAdd();
 }
 
-// Helpers Básicos
-function trocarTela(id) { document.querySelectorAll('.view').forEach(v => v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function abrirChat(id, nome) {
+    chatAtual = {id, name:nome};
+    document.getElementById('current-chat-name').innerText = nome;
+    document.getElementById('messages-area').innerHTML = '';
+    conectar(id);
+    trocarTela('view-chat');
+}
+
+// --- NAVEGAÇÃO ---
+function mudarAba(aba) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.list-area').forEach(l => l.style.display = 'none');
+    
+    if(aba === 'chats') {
+        document.querySelector('.tab:nth-child(1)').classList.add('active');
+        document.getElementById('list-chats').style.display = 'block';
+    } else {
+        document.querySelector('.tab:nth-child(2)').classList.add('active');
+        document.getElementById('list-groups').style.display = 'block';
+    }
+}
+
+function trocarTela(id) { document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function voltarHome() { chatAtual = null; trocarTela('view-home'); }
 function mostrarModalAdd() { document.getElementById('modal-add').classList.add('open'); }
 function fecharModalAdd() { document.getElementById('modal-add').classList.remove('open'); }
-function showToast(msg) { const t = document.createElement('div'); t.className='toast'; t.innerText=msg; document.getElementById('toast-container').appendChild(t); setTimeout(()=>t.remove(), 3000); }
-function toggleModoBomba() { modoBomba = !modoBomba; document.getElementById('btn-bomb').style.color = modoBomba ? 'red' : 'inherit'; showToast(modoBomba ? "Modo Espião Ativado" : "Modo Normal"); }
-function rolarFim() { const area = document.getElementById('messages-area'); area.scrollTop = area.scrollHeight; }
-
-init();
+function showToast(m) { const t=document.createElement('div'); t.className='toast'; t.innerText=m; document.getElementById('toast-container').appendChild(t); setTimeout(()=>t.remove(),3000); }
+function toggleModoBomba() { modoBomba = !modoBomba; document.getElementById('btn-bomb').style.color = modoBomba ? 'red' : 'inherit'; showToast(modoBomba?"Modo Espião ON":"Modo Normal"); }
+function limparTudo() { localStorage.clear(); location.reload(); }
+function copiarID() { navigator.clipboard.writeText(meuId); showToast("ID Copiado!"); }
+function abrirQR() { 
+    document.getElementById('modal-qr').classList.add('open'); 
+    document.getElementById('qrcode-container').innerHTML = '';
+    new QRCode(document.getElementById("qrcode-container"), {text:meuId, width:200, height:200});
+}
+function abrirConfig() { trocarTela('view-settings'); }
