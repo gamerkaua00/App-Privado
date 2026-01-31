@@ -1,121 +1,84 @@
 // ======================================================
-// GHOSTMSG - SCRIPT PRINCIPAL (V5.1 STABLE)
+// GHOSTMSG V5 - ULTIMATE EDITION (ALL FEATURES)
 // ======================================================
 
-// --- VARIÁVEIS GLOBAIS ---
-let meuId = localStorage.getItem('ghost_my_id');
-let meuNick = localStorage.getItem('ghost_my_nick') || "Eu";
+// --- VARIÁVEIS DE SISTEMA ---
+let meuId = localStorage.getItem('ghost_id');
+let config = JSON.parse(localStorage.getItem('ghost_config') || '{"autoDl": true, "theme": "dark"}');
 let contatos = JSON.parse(localStorage.getItem('ghost_contacts') || "[]");
-let contatoAtual = null; // {id, name}
-let peer = null;
-let conexoes = {}; // { id: conn }
-let digitandoTimeout = null;
+let avatarBase64 = localStorage.getItem('ghost_avatar') || ""; // Minha Foto
+let meuNome = localStorage.getItem('ghost_name') || "Eu";
 
-// Elementos de Áudio
-const somEnviar = document.getElementById('sound-sent');
-const somReceber = document.getElementById('sound-received');
+// --- VARIÁVEIS DE ESTADO ---
+let peer = null;
+let conexoes = {};
+let contatoAtual = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let gravando = false;
+let intervaloGravacao = null;
 
 // --- INICIALIZAÇÃO ---
-
 function init() {
-    // 1. Gera ID único se não tiver
     if (!meuId) {
         meuId = "Ghost-" + Math.floor(Math.random() * 999999);
-        localStorage.setItem('ghost_my_id', meuId);
+        localStorage.setItem('ghost_id', meuId);
     }
 
-    // 2. Aplica Tema
-    const tema = localStorage.getItem('ghost_theme');
-    if (tema) document.body.className = tema;
-
-    // 3. Preenche tela de configurações
-    document.getElementById('my-nickname').value = meuNick;
+    // Carrega Perfil e Configs
+    document.getElementById('my-nickname').value = meuNome;
     document.getElementById('my-id-display').innerText = meuId;
+    document.getElementById('toggle-auto-dl').checked = config.autoDl;
+    aplicarAvatar(avatarBase64);
+    aplicarWallpaper();
 
-    // 4. Inicia sistemas
-    renderizarContatos();
+    // Inicia Peer
     iniciarPeer();
+    renderizarContatos();
 
-    // 5. Listener para "Digitando..."
-    document.getElementById('msg-input').addEventListener('input', avisarQueEstouDigitando);
+    // Monitora Digitação para mudar ícone do botão (Mic vs Send)
+    document.getElementById('msg-input').addEventListener('input', (e) => {
+        const btnIcon = document.getElementById('icon-action');
+        if (e.target.value.trim().length > 0) {
+            btnIcon.innerText = "send"; // Vira botão enviar
+        } else {
+            btnIcon.innerText = "mic"; // Vira botão gravar
+        }
+    });
 }
 
-// Evento do Cordova (Android pronto)
-document.addEventListener('deviceready', function () {
-    console.log("Sistema Android Iniciado.");
-
+// Cordova Ready
+document.addEventListener('deviceready', () => {
     if (window.cordova && cordova.plugins) {
-        // A. Notificações (Pede permissão no Android 13+)
-        if (cordova.plugins.notification && cordova.plugins.notification.local) {
-            cordova.plugins.notification.local.requestPermission(function (granted) {
-                console.log('Permissão Notificação: ' + granted);
-            });
-        }
-
-        // B. Modo Background (Para não cair a conexão)
-        if (cordova.plugins.backgroundMode) {
-            // Habilita o modo
-            cordova.plugins.backgroundMode.enable();
-            
-            // Configura a notificação persistente (Obrigatória no Android novo para não matar o app)
-            cordova.plugins.backgroundMode.setDefaults({
-                title: "GhostMsg Online",
-                text: "Mantendo conexão criptografada...",
-                icon: 'icon', 
-                color: '0D1117',
-                resume: true,
-                hidden: false, 
-                bigText: false
-            });
-
-            // Evita que o Android pause o JavaScript
-            cordova.plugins.backgroundMode.on('activate', function() {
-                cordova.plugins.backgroundMode.disableWebViewOptimizations(); 
-            });
-        }
+        if(cordova.plugins.backgroundMode) cordova.plugins.backgroundMode.enable();
+        if(cordova.plugins.notification) cordova.plugins.notification.local.requestPermission();
     }
 }, false);
 
-// Inicia o app
 init();
 
 // --- LÓGICA DE REDE (P2P) ---
-
 function iniciarPeer() {
     peer = new Peer(meuId);
-
-    peer.on('open', (id) => {
-        console.log("Conectado na rede P2P: " + id);
-        atualizarStatusUI("Online", "online");
-    });
-
+    
+    peer.on('open', (id) => atualizarStatus("Online", "online"));
+    
     peer.on('connection', (conn) => {
         setupConexao(conn);
-        showToast(`Nova conexão: ${obterNomeContato(conn.peer)}`, 'success');
+        showToast("Nova conexão recebida!", "success");
     });
-
+    
     peer.on('error', (err) => {
-        console.error("Erro PeerJS:", err);
-        if (err.type === 'peer-unavailable') {
-            showToast("Usuário offline ou ID incorreto.", "error");
-            atualizarStatusUI("Offline", "error");
-        } else if (err.type === 'network') {
-            atualizarStatusUI("Sem Internet", "error");
-        }
+        if(err.type === 'peer-unavailable') atualizarStatus("Offline", "error");
     });
 
-    peer.on('disconnected', () => {
-        // Tenta reconectar sozinho
-        setTimeout(() => peer.reconnect(), 3000);
-    });
+    peer.on('disconnected', () => setTimeout(() => peer.reconnect(), 3000));
 }
 
-function conectarP2P(destId) {
-    if (!destId) return;
-    // Fecha anterior para evitar duplicidade
-    if (conexoes[destId]) conexoes[destId].close();
-    
-    const conn = peer.connect(destId);
+function conectar(id) {
+    if(!id) return;
+    if(conexoes[id]) conexoes[id].close();
+    const conn = peer.connect(id);
     setupConexao(conn);
 }
 
@@ -123,338 +86,309 @@ function setupConexao(conn) {
     conexoes[conn.peer] = conn;
 
     conn.on('open', () => {
-        if (contatoAtual && contatoAtual.id === conn.peer) {
-            atualizarStatusUI("Online", "online");
-        }
+        if(contatoAtual && contatoAtual.id === conn.peer) atualizarStatus("Online", "online");
     });
 
-    conn.on('data', (pacote) => {
-        tratarPacoteRecebido(conn.peer, pacote);
-    });
-
+    conn.on('data', (pacote) => receberPacote(conn.peer, pacote));
+    
     conn.on('close', () => {
-        delete conexoes[conn.peer];
-        if (contatoAtual && contatoAtual.id === conn.peer) {
-            atualizarStatusUI("Desconectou", "error");
-        }
+        if(contatoAtual && contatoAtual.id === conn.peer) atualizarStatus("Desconectado", "error");
     });
 }
 
-// --- TRATAMENTO DE MENSAGENS ---
+// --- ENVIO E RECEBIMENTO ---
 
-function tratarPacoteRecebido(remetenteId, pacote) {
-    // Pacote = { type: 'text'|'image'|'typing', content: '...' }
-
-    // 1. É Status de Digitando?
-    if (pacote.type === 'typing') {
-        if (contatoAtual && contatoAtual.id === remetenteId) {
-            mostrarIndicadorDigitando();
-        }
-        return;
-    }
-
-    // 2. Verifica se o App está em segundo plano
-    let appEmBackground = document.hidden; // Verificação padrão Web
-    if (window.cordova && cordova.plugins && cordova.plugins.backgroundMode) {
-        appEmBackground = cordova.plugins.backgroundMode.isActive();
-    }
-
-    const estouNoChat = contatoAtual && contatoAtual.id === remetenteId;
-
-    // 3. Exibe a mensagem ou notificação
-    if (estouNoChat && !appEmBackground) {
-        // Estou vendo a tela -> Mostra Balão
-        adicionarBalao(pacote.content, 'received', pacote.type);
-        tocarSom('received');
-    } else {
-        // Estou fora -> Notificação
-        tocarSom('received');
-        const preview = pacote.type === 'image' ? '📷 Foto' : pacote.content;
-        
-        if (appEmBackground) {
-            enviarNotificacaoNativa(remetenteId, preview);
-        } else {
-            showToast(`Msg de ${obterNomeContato(remetenteId)}`, 'success');
-        }
-    }
-}
-
-function enviarNotificacaoNativa(id, texto) {
-    if (window.cordova && cordova.plugins && cordova.plugins.notification) {
-        cordova.plugins.notification.local.schedule({
-            id: new Date().getTime(),
-            title: obterNomeContato(id),
-            text: texto,
-            foreground: true,
-            vibrate: true,
-            priority: 2,
-            smallIcon: 'res://icon',
-            lockscreenVisibility: 'PUBLIC'
-        });
-    }
-}
-
-// --- ENVIO DE DADOS ---
-
-function enviarTexto() {
+// Função Principal do Botão de Ação (Send ou Gravar)
+function acaoPrincipal() {
     const input = document.getElementById('msg-input');
     const texto = input.value.trim();
-    if (!texto || !contatoAtual) return;
 
-    enviarPacote({ type: 'text', content: texto });
-    input.value = '';
-}
-
-function enviarImagem(inputElement) {
-    const arquivo = inputElement.files[0];
-    if (!arquivo || !contatoAtual) return;
-
-    if (arquivo.size > 2 * 1024 * 1024) { // 2MB
-        alert("Imagem muito grande (Max 2MB).");
-        return;
+    if (texto.length > 0) {
+        // Enviar Texto
+        enviarPacote({ type: 'text', content: texto });
+        input.value = '';
+        document.getElementById('icon-action').innerText = "mic";
+    } else {
+        // Gravar Áudio
+        if (!gravando) iniciarGravacao();
     }
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        enviarPacote({ type: 'image', content: e.target.result });
-    };
-    reader.readAsDataURL(arquivo);
-    inputElement.value = ''; // Reseta input
 }
 
 function enviarPacote(pacote) {
-    // Loopback (Eu comigo mesmo)
-    if (contatoAtual.id === meuId) {
-        adicionarBalao(pacote.content, 'sent', pacote.type);
-        tocarSom('sent');
-        setTimeout(() => {
-            adicionarBalao(pacote.content, 'received', pacote.type);
-            tocarSom('received');
-        }, 300);
-        return;
-    }
+    // pacote = { type: 'text'|'image'|'video'|'audio', content: 'base64...' }
+    if (!contatoAtual) return showToast("Abra um chat primeiro", "error");
 
-    // Envio P2P Real
-    const conn = conexoes[contatoAtual.id];
-    if (conn && conn.open) {
-        conn.send(pacote);
-        adicionarBalao(pacote.content, 'sent', pacote.type);
-        tocarSom('sent');
+    // Adiciona ao meu chat
+    adicionarBalao(pacote, 'sent');
+    
+    // Envia P2P
+    if (contatoAtual.id !== meuId) {
+        const conn = conexoes[contatoAtual.id];
+        if (conn && conn.open) {
+            conn.send(pacote);
+        } else {
+            showToast("Reconectando...", "error");
+            conectar(contatoAtual.id);
+            setTimeout(() => { if(conexoes[contatoAtual.id]) conexoes[contatoAtual.id].send(pacote) }, 1500);
+        }
+    }
+}
+
+function receberPacote(remetenteId, pacote) {
+    const estouNoChat = contatoAtual && contatoAtual.id === remetenteId;
+    
+    if (estouNoChat && !document.hidden) {
+        adicionarBalao(pacote, 'received');
     } else {
-        showToast("Reconectando...", "error");
-        conectarP2P(contatoAtual.id);
-        // Tenta re-enviar rapidinho
-        setTimeout(() => {
-            const novaConn = conexoes[contatoAtual.id];
-            if(novaConn && novaConn.open) {
-                novaConn.send(pacote);
-                adicionarBalao(pacote.content, 'sent', pacote.type);
-                tocarSom('sent');
-            } else {
-                showToast("Falha. Usuário Offline.", "error");
-            }
-        }, 1500);
+        // Notificação
+        let msg = "Nova Mensagem";
+        if(pacote.type === 'image') msg = "📷 Foto";
+        if(pacote.type === 'video') msg = "🎥 Vídeo";
+        if(pacote.type === 'audio') msg = "🎤 Áudio";
+        
+        if(window.cordova) {
+            cordova.plugins.notification.local.schedule({ title: obterNome(remetenteId), text: msg });
+        } else {
+            showToast(`Msg de ${obterNome(remetenteId)}`, "success");
+        }
     }
 }
 
-// --- INDICADOR DIGITANDO ---
+// --- MÍDIA (FOTO, VIDEO, AUDIO) ---
 
-function avisarQueEstouDigitando() {
-    if (!contatoAtual || contatoAtual.id === meuId) return;
-    const conn = conexoes[contatoAtual.id];
-    if (conn && conn.open) {
-        conn.send({ type: 'typing', content: true });
+function processarArquivo(input, tipo) {
+    const arquivo = input.files[0];
+    if (!arquivo) return;
+
+    if (arquivo.size > 8 * 1024 * 1024) return alert("Arquivo muito grande (Max 8MB)");
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        enviarPacote({ type: tipo, content: e.target.result });
+        toggleAnexos(); // Fecha menu
+    };
+    reader.readAsDataURL(arquivo);
+    input.value = '';
+}
+
+// --- GRAVADOR DE ÁUDIO ---
+function iniciarGravacao() {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+        
+        mediaRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = () => enviarPacote({ type: 'audio', content: reader.result });
+            
+            stream.getTracks().forEach(track => track.stop()); // Libera mic
+        };
+
+        mediaRecorder.start();
+        gravando = true;
+        document.getElementById('audio-recorder').classList.add('recording');
+        
+        // Timer visual
+        let seg = 0;
+        intervaloGravacao = setInterval(() => {
+            seg++;
+            document.getElementById('record-timer').innerText = `00:${seg < 10 ? '0'+seg : seg}`;
+        }, 1000);
+
+    }).catch(e => showToast("Erro no Microfone: " + e, "error"));
+}
+
+function enviarAudio() {
+    if (mediaRecorder && gravando) {
+        mediaRecorder.stop();
+        cancelarGravacaoUI();
     }
 }
 
-function mostrarIndicadorDigitando() {
-    const el = document.getElementById('current-chat-status');
-    const textoAntigo = el.innerText === "Digitando..." ? "Online" : el.innerText; // Preserva status
-    
-    el.innerText = "Digitando...";
-    el.classList.add('typing-indicator');
-
-    if (digitandoTimeout) clearTimeout(digitandoTimeout);
-    
-    digitandoTimeout = setTimeout(() => {
-        el.innerText = "Online"; // Assume online se parar de digitar
-        el.classList.remove('typing-indicator');
-    }, 2000);
+function cancelarGravacao() {
+    if (mediaRecorder) {
+        mediaRecorder.stop();
+        audioChunks = []; // Descarta
+        cancelarGravacaoUI();
+    }
 }
 
-// --- INTERFACE (UI) ---
+function cancelarGravacaoUI() {
+    gravando = false;
+    clearInterval(intervaloGravacao);
+    document.getElementById('audio-recorder').classList.remove('recording');
+    document.getElementById('record-timer').innerText = "00:00";
+}
 
-function adicionarBalao(conteudo, lado, tipo) {
+// --- UI HELPERS ---
+
+function adicionarBalao(pacote, lado) {
     const area = document.getElementById('messages-area');
     const div = document.createElement('div');
     div.className = 'msg ' + lado;
-    
-    let htmlInterno = '';
-    if (tipo === 'image') {
-        htmlInterno = `<img src="${conteudo}" class="msg-img" onclick="verImagem(this.src)">`;
+
+    let conteudoHtml = '';
+
+    // Verifica Auto-Download (Se for recebido e config for false, mostra botão)
+    if (lado === 'received' && !config.autoDl && (pacote.type === 'image' || pacote.type === 'video')) {
+        // Lógica de "Clique para Baixar" (Simplificada: salva num atributo data e exibe botão)
+        conteudoHtml = `
+            <button onclick="baixarMidia(this, '${pacote.type}', '${pacote.content}')" style="background:#333;color:white;border:none;padding:10px;border-radius:5px">
+                ⬇ Baixar ${pacote.type}
+            </button>
+        `;
     } else {
-        htmlInterno = conteudo;
+        // Exibe direto
+        if (pacote.type === 'text') conteudoHtml = pacote.content;
+        if (pacote.type === 'image') conteudoHtml = `<img src="${pacote.content}" onclick="verFull(this.src)">`;
+        if (pacote.type === 'video') conteudoHtml = `<video src="${pacote.content}" controls></video>`;
+        if (pacote.type === 'audio') conteudoHtml = `<audio src="${pacote.content}" controls></audio>`;
     }
-    
-    const hora = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    div.innerHTML = `${htmlInterno} <span class="msg-time">${hora}</span>`;
+
+    const hora = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    div.innerHTML = `${conteudoHtml} <span class="msg-time">${hora}</span>`;
     
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
 }
 
-function verImagem(src) {
-    const w = window.open("");
-    w.document.write(`<body style="background:#000;margin:0;display:flex;align-items:center;justify-content:center;height:100vh"><img src="${src}" style="max-width:100%;max-height:100%"></body>`);
+function baixarMidia(btn, tipo, content) {
+    // Substitui o botão pela mídia real
+    let html = '';
+    if (tipo === 'image') html = `<img src="${content}" onclick="verFull(this.src)">`;
+    if (tipo === 'video') html = `<video src="${content}" controls></video>`;
+    btn.parentNode.innerHTML = html + btn.parentNode.innerHTML.split('<span')[1]; // Mantém a hora
 }
 
-function showToast(msg, type) {
-    const container = document.getElementById('toast-container');
-    if(!container) return;
-    const t = document.createElement('div');
-    t.className = `toast ${type}`;
-    t.innerText = msg;
-    container.appendChild(t);
-    setTimeout(() => {
-        t.style.opacity = '0';
-        setTimeout(() => t.remove(), 300);
-    }, 3000);
+function toggleAnexos() {
+    const menu = document.getElementById('attach-menu');
+    menu.classList.toggle('open');
 }
 
-function tocarSom(tipo) {
-    const audio = tipo === 'sent' ? somEnviar : somReceber;
-    if(audio) audio.play().catch(e => {}); // Ignora erros de autoplay
+// --- PERFIL E CONFIGURAÇÕES ---
+
+function salvarPerfil() {
+    meuNome = document.getElementById('my-nickname').value;
+    localStorage.setItem('ghost_name', meuNome);
+    showToast("Nome salvo!", "success");
 }
 
-function atualizarStatusUI(texto, classe) {
-    if (!contatoAtual) return;
-    const el = document.getElementById('current-chat-status');
-    const dot = document.getElementById('status-dot');
-    
-    if(el) el.innerText = texto;
-    if(dot) {
-        dot.style.background = (classe === 'online') ? '#00ff88' : '#ff4444';
-        dot.style.boxShadow = (classe === 'online') ? '0 0 5px #00ff88' : 'none';
+function mudarAvatar(input) {
+    const file = input.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            avatarBase64 = e.target.result;
+            localStorage.setItem('ghost_avatar', avatarBase64);
+            aplicarAvatar(avatarBase64);
+        };
+        reader.readAsDataURL(file);
     }
 }
 
-// --- NAVEGAÇÃO E CONTATOS ---
-
-function irParaChat(id, nome) {
-    contatoAtual = { id: id, name: nome };
-    document.getElementById('current-chat-name').innerText = nome;
-    document.getElementById('messages-area').innerHTML = ''; // Limpa chat (não tem histórico persistente ainda)
-    
-    atualizarStatusUI("Conectando...", "normal");
-    
-    if (id !== meuId) {
-        if (!conexoes[id] || !conexoes[id].open) conectarP2P(id);
-        else atualizarStatusUI("Online", "online");
-    } else {
-        atualizarStatusUI("Notas Pessoais", "online");
-    }
-    
-    trocarTela('view-chat');
+function aplicarAvatar(base64) {
+    if(!base64) return;
+    document.getElementById('home-avatar').innerHTML = `<img src="${base64}">`;
+    document.getElementById('settings-avatar').innerHTML = `<img src="${base64}">`;
 }
 
+function mudarWallpaper(input) {
+    const file = input.files[0];
+    if(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            localStorage.setItem('ghost_wallpaper', e.target.result);
+            aplicarWallpaper();
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function aplicarWallpaper() {
+    const wp = localStorage.getItem('ghost_wallpaper');
+    if(wp) {
+        document.getElementById('chat-wallpaper').style.backgroundImage = `url(${wp})`;
+        document.getElementById('chat-wallpaper').style.opacity = '0.4';
+    }
+}
+
+function toggleAutoDownload(chk) {
+    config.autoDl = chk.checked;
+    localStorage.setItem('ghost_config', JSON.stringify(config));
+}
+
+// --- QR CODE ---
+function abrirQR() {
+    document.getElementById('modal-qr').classList.add('open');
+    document.getElementById('qrcode-container').innerHTML = '';
+    new QRCode(document.getElementById("qrcode-container"), {
+        text: meuId,
+        width: 200,
+        height: 200
+    });
+}
+function fecharModalQR() { document.getElementById('modal-qr').classList.remove('open'); }
+
+// --- GERENCIAMENTO DE CONTATOS (Resumido) ---
 function renderizarContatos() {
     const lista = document.getElementById('contact-list');
     lista.innerHTML = '';
-
-    if (contatos.length === 0) {
-        lista.innerHTML = '<div style="opacity:0.5;text-align:center;padding:30px">Nenhum contato.</div>';
-        return;
-    }
-
     contatos.forEach(c => {
-        const item = document.createElement('div');
-        item.className = 'contact-item';
-        item.onclick = () => irParaChat(c.id, c.name);
-        item.innerHTML = `
-            <div class="avatar">${c.name.charAt(0).toUpperCase()}</div>
-            <div class="contact-info">
-                <h4>${c.name}</h4>
-                <p>${c.id === meuId ? 'Você' : 'ID: ' + c.id.substring(0,8)+'...'}</p>
-            </div>
-        `;
-        lista.appendChild(item);
+        const div = document.createElement('div');
+        div.className = 'contact-item';
+        div.onclick = () => abrirChat(c.id, c.name);
+        div.innerHTML = `<div class="mini-avatar">${c.name[0]}</div> <div><b>${c.name}</b><br><small>${c.id.substring(0,8)}...</small></div>`;
+        lista.appendChild(div);
     });
 }
 
 function salvarNovoContato() {
-    const n = document.getElementById('new-contact-name').value.trim();
-    const i = document.getElementById('new-contact-id').value.trim();
-    
-    if (n && i) {
-        if (contatos.some(c => c.id === i)) {
-            showToast("Esse ID já existe!", "error");
-            return;
-        }
-        contatos.push({ name: n, id: i });
+    const n = document.getElementById('new-contact-name').value;
+    const i = document.getElementById('new-contact-id').value;
+    if(n && i) {
+        contatos.push({name:n, id:i});
         localStorage.setItem('ghost_contacts', JSON.stringify(contatos));
         renderizarContatos();
         fecharModalAdd();
-        showToast("Contato adicionado!", "success");
-        // Limpa
-        document.getElementById('new-contact-name').value = '';
-        document.getElementById('new-contact-id').value = '';
-    } else {
-        showToast("Preencha nome e ID.", "error");
     }
 }
 
-function adicionarEuMesmo() {
-    document.getElementById('new-contact-name').value = "Eu (Notas)";
-    document.getElementById('new-contact-id').value = meuId;
+function abrirChat(id, nome) {
+    contatoAtual = {id, name: nome};
+    document.getElementById('current-chat-name').innerText = nome;
+    document.getElementById('messages-area').innerHTML = '';
+    conectar(id);
+    trocarTela('view-chat');
 }
 
 // --- UTILS ---
-
-function obterNomeContato(id) {
-    if (id === meuId) return "Eu";
-    const c = contatos.find(x => x.id === id);
-    return c ? c.name : id.substring(0, 6);
-}
-
-function salvarNickname() {
-    const n = document.getElementById('my-nickname').value.trim();
-    if(n) {
-        localStorage.setItem('ghost_my_nick', n);
-        meuNick = n;
-        showToast("Apelido salvo!");
-    }
-}
-
-function mudarTema(t) {
-    document.body.className = '';
-    if(t !== 'cyber') document.body.classList.add('theme-'+t);
-    localStorage.setItem('ghost_theme', document.body.className);
-    showToast("Tema alterado.");
-}
-
-function copiarID() {
-    navigator.clipboard.writeText(meuId);
-    showToast("ID copiado!");
-}
-
-function limparTudo() {
-    if(confirm("Apagar tudo e reiniciar?")) {
-        localStorage.clear();
-        location.reload();
-    }
-}
-
-// Navegação UI
 function voltarHome() { contatoAtual = null; trocarTela('view-home'); }
-function abrirConfig() { trocarTela('view-settings'); }
-function mostrarModalAdd() { document.getElementById('modal-add').classList.add('open'); }
-function fecharModalAdd() { document.getElementById('modal-add').classList.remove('open'); }
 function trocarTela(id) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(id).classList.add('active');
 }
-
-// Atalho Enter
-document.getElementById('msg-input').addEventListener('keypress', (e) => {
-    if(e.key === 'Enter') enviarTexto();
-});
+function showToast(msg, type) {
+    const t = document.createElement('div');
+    t.className = `toast ${type}`; t.innerText = msg;
+    document.getElementById('toast-container').appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+}
+function obterNome(id) { 
+    const c = contatos.find(x => x.id === id);
+    return c ? c.name : "Desconhecido";
+}
+function copiarID() { navigator.clipboard.writeText(meuId); showToast("Copiado!", "success"); }
+function mostrarModalAdd() { document.getElementById('modal-add').classList.add('open'); }
+function fecharModalAdd() { document.getElementById('modal-add').classList.remove('open'); }
+function abrirConfig() { trocarTela('view-settings'); }
+function adicionarEuMesmo() { document.getElementById('new-contact-id').value = meuId; document.getElementById('new-contact-name').value = "Eu"; }
+function limparChatAtual() { document.getElementById('messages-area').innerHTML = ''; }
+function verFull(src) { window.open("").document.write(`<img src="${src}" style="width:100%">`); }
+function toggleTema(chk) { 
+    if(!chk.checked) document.body.style.filter = "invert(1)"; // Simples light mode hack
+    else document.body.style.filter = "none";
+}
