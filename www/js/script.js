@@ -1,394 +1,346 @@
 // ======================================================
-// GHOSTMSG V5 - ULTIMATE EDITION (ALL FEATURES)
+// GHOSTMSG V7 - KMZ ULTIMATE EDITION
 // ======================================================
 
-// --- VARIÁVEIS DE SISTEMA ---
-let meuId = localStorage.getItem('ghost_id');
-let config = JSON.parse(localStorage.getItem('ghost_config') || '{"autoDl": true, "theme": "dark"}');
-let contatos = JSON.parse(localStorage.getItem('ghost_contacts') || "[]");
-let avatarBase64 = localStorage.getItem('ghost_avatar') || ""; // Minha Foto
-let meuNome = localStorage.getItem('ghost_name') || "Eu";
-
-// --- VARIÁVEIS DE ESTADO ---
+// --- ESTADO GLOBAL ---
+let meuId = localStorage.getItem('kmz_id');
+let meuNome = localStorage.getItem('kmz_name') || "Usuário KMZ";
+let contatos = JSON.parse(localStorage.getItem('kmz_contacts') || "[]");
+let grupos = JSON.parse(localStorage.getItem('kmz_groups') || "[]");
 let peer = null;
 let conexoes = {};
-let contatoAtual = null;
-let mediaRecorder = null;
-let audioChunks = [];
-let gravando = false;
-let intervaloGravacao = null;
+let chatAtual = null; // { id, tipo: 'p2p' ou 'grupo' }
+let modoBomba = false;
+
+// Configuração de BD para não travar
+const DB_NAME = 'KMZ_DB';
+let db;
 
 // --- INICIALIZAÇÃO ---
-function init() {
+async function init() {
+    // Splash Screen
+    setTimeout(() => {
+        document.getElementById('splash-screen').style.opacity = 0;
+        setTimeout(() => document.getElementById('splash-screen').style.display = 'none', 500);
+    }, 2000);
+
     if (!meuId) {
-        meuId = "Ghost-" + Math.floor(Math.random() * 999999);
-        localStorage.setItem('ghost_id', meuId);
+        meuId = "KMZ-" + Math.floor(Math.random() * 9999999);
+        localStorage.setItem('kmz_id', meuId);
     }
 
-    // Carrega Perfil e Configs
-    document.getElementById('my-nickname').value = meuNome;
     document.getElementById('my-id-display').innerText = meuId;
-    document.getElementById('toggle-auto-dl').checked = config.autoDl;
-    aplicarAvatar(avatarBase64);
-    aplicarWallpaper();
+    document.getElementById('my-nickname').value = meuNome;
 
-    // Inicia Peer
+    await initDB();
+    renderizarListas();
     iniciarPeer();
-    renderizarContatos();
 
-    // Monitora Digitação para mudar ícone do botão (Mic vs Send)
+    // Monitora Digitação
     document.getElementById('msg-input').addEventListener('input', (e) => {
-        const btnIcon = document.getElementById('icon-action');
-        if (e.target.value.trim().length > 0) {
-            btnIcon.innerText = "send"; // Vira botão enviar
-        } else {
-            btnIcon.innerText = "mic"; // Vira botão gravar
-        }
+        const btn = document.getElementById('icon-action');
+        btn.innerText = e.target.value.trim().length > 0 ? "send" : "mic";
     });
 }
 
-// Cordova Ready
-document.addEventListener('deviceready', () => {
-    if (window.cordova && cordova.plugins) {
-        if(cordova.plugins.backgroundMode) cordova.plugins.backgroundMode.enable();
-        if(cordova.plugins.notification) cordova.plugins.notification.local.requestPermission();
-    }
-}, false);
+// --- BANCO DE DADOS (IndexedDB) ---
+function initDB() {
+    return new Promise(resolve => {
+        const req = indexedDB.open(DB_NAME, 2);
+        req.onupgradeneeded = e => {
+            db = e.target.result;
+            if(!db.objectStoreNames.contains('msgs')) {
+                const s = db.createObjectStore('msgs', { keyPath: 'id', autoIncrement: true });
+                s.createIndex('chatId', 'chatId', { unique: false });
+            }
+        };
+        req.onsuccess = e => { db = e.target.result; resolve(); };
+    });
+}
 
-init();
+function salvarMsgDB(msg) {
+    if(!db) return;
+    const tx = db.transaction(['msgs'], 'readwrite');
+    tx.objectStore('msgs').add(msg);
+}
 
-// --- LÓGICA DE REDE (P2P) ---
+function carregarHistorico(chatId) {
+    document.getElementById('messages-area').innerHTML = ''; // Limpa tela
+    if(!db) return;
+    
+    const tx = db.transaction(['msgs'], 'readonly');
+    const store = tx.objectStore('msgs');
+    const index = store.index('chatId');
+    const req = index.getAll(chatId);
+    
+    req.onsuccess = () => {
+        const msgs = req.result;
+        // OTIMIZAÇÃO: Se tiver mais de 50 msgs, renderiza só as ultimas
+        const ultimas = msgs.slice(-50); 
+        ultimas.forEach(m => adicionarBalaoUI(m, m.remetente === meuId ? 'sent' : 'received'));
+        rolarFim();
+    };
+}
+
+// --- REDE P2P ---
 function iniciarPeer() {
     peer = new Peer(meuId);
-    
-    peer.on('open', (id) => atualizarStatus("Online", "online"));
-    
-    peer.on('connection', (conn) => {
-        setupConexao(conn);
-        showToast("Nova conexão recebida!", "success");
+    peer.on('open', () => console.log('Online'));
+    peer.on('connection', conn => {
+        conectar(conn);
+        showToast("Nova conexão!", "success");
     });
-    
-    peer.on('error', (err) => {
-        if(err.type === 'peer-unavailable') atualizarStatus("Offline", "error");
-    });
-
-    peer.on('disconnected', () => setTimeout(() => peer.reconnect(), 3000));
+    peer.on('error', e => console.log(e));
 }
 
-function conectar(id) {
-    if(!id) return;
-    if(conexoes[id]) conexoes[id].close();
-    const conn = peer.connect(id);
-    setupConexao(conn);
-}
-
-function setupConexao(conn) {
+function conectar(conn) {
     conexoes[conn.peer] = conn;
-
-    conn.on('open', () => {
-        if(contatoAtual && contatoAtual.id === conn.peer) atualizarStatus("Online", "online");
-    });
-
-    conn.on('data', (pacote) => receberPacote(conn.peer, pacote));
-    
-    conn.on('close', () => {
-        if(contatoAtual && contatoAtual.id === conn.peer) atualizarStatus("Desconectado", "error");
-    });
+    conn.on('data', data => receberPacote(data, conn.peer));
 }
 
-// --- ENVIO E RECEBIMENTO ---
-
-// Função Principal do Botão de Ação (Send ou Gravar)
+// --- MENSAGENS E GRUPOS ---
 function acaoPrincipal() {
     const input = document.getElementById('msg-input');
-    const texto = input.value.trim();
-
-    if (texto.length > 0) {
-        // Enviar Texto
-        enviarPacote({ type: 'text', content: texto });
+    const txt = input.value.trim();
+    if(txt) {
+        enviarMensagem(txt, 'text');
         input.value = '';
         document.getElementById('icon-action').innerText = "mic";
     } else {
-        // Gravar Áudio
-        if (!gravando) iniciarGravacao();
+        alert("Segure para gravar áudio (Em breve)");
     }
 }
 
-function enviarPacote(pacote) {
-    // pacote = { type: 'text'|'image'|'video'|'audio', content: 'base64...' }
-    if (!contatoAtual) return showToast("Abra um chat primeiro", "error");
+function enviarMensagem(conteudo, tipo) {
+    if(!chatAtual) return;
 
-    // Adiciona ao meu chat
-    adicionarBalao(pacote, 'sent');
-    
-    // Envia P2P
-    if (contatoAtual.id !== meuId) {
-        const conn = conexoes[contatoAtual.id];
-        if (conn && conn.open) {
-            conn.send(pacote);
-        } else {
-            showToast("Reconectando...", "error");
-            conectar(contatoAtual.id);
-            setTimeout(() => { if(conexoes[contatoAtual.id]) conexoes[contatoAtual.id].send(pacote) }, 1500);
-        }
-    }
-}
-
-function receberPacote(remetenteId, pacote) {
-    const estouNoChat = contatoAtual && contatoAtual.id === remetenteId;
-    
-    if (estouNoChat && !document.hidden) {
-        adicionarBalao(pacote, 'received');
-    } else {
-        // Notificação
-        let msg = "Nova Mensagem";
-        if(pacote.type === 'image') msg = "📷 Foto";
-        if(pacote.type === 'video') msg = "🎥 Vídeo";
-        if(pacote.type === 'audio') msg = "🎤 Áudio";
-        
-        if(window.cordova) {
-            cordova.plugins.notification.local.schedule({ title: obterNome(remetenteId), text: msg });
-        } else {
-            showToast(`Msg de ${obterNome(remetenteId)}`, "success");
-        }
-    }
-}
-
-// --- MÍDIA (FOTO, VIDEO, AUDIO) ---
-
-function processarArquivo(input, tipo) {
-    const arquivo = input.files[0];
-    if (!arquivo) return;
-
-    if (arquivo.size > 8 * 1024 * 1024) return alert("Arquivo muito grande (Max 8MB)");
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        enviarPacote({ type: tipo, content: e.target.result });
-        toggleAnexos(); // Fecha menu
+    const msg = {
+        chatId: chatAtual.id,
+        remetente: meuId,
+        nomeRemetente: meuNome,
+        tipo: tipo,
+        conteudo: conteudo,
+        data: new Date().getTime(),
+        bomba: modoBomba
     };
-    reader.readAsDataURL(arquivo);
-    input.value = '';
+
+    // 1. Mostra na minha tela e salva
+    adicionarBalaoUI(msg, 'sent');
+    salvarMsgDB(msg);
+
+    // 2. Envia
+    if (chatAtual.tipo === 'p2p') {
+        // Envio Direto
+        enviarP2P(chatAtual.id, msg);
+    } else {
+        // Envio GRUPO (Multicast)
+        const grupo = grupos.find(g => g.id === chatAtual.id);
+        if(grupo) {
+            grupo.membros.forEach(membroId => {
+                if(membroId !== meuId) enviarP2P(membroId, msg);
+            });
+        }
+    }
+    rolarFim();
 }
 
-// --- GRAVADOR DE ÁUDIO ---
-function iniciarGravacao() {
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        
-        mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
-        
-        mediaRecorder.onstop = () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
-            const reader = new FileReader();
-            reader.readAsDataURL(audioBlob);
-            reader.onloadend = () => enviarPacote({ type: 'audio', content: reader.result });
-            
-            stream.getTracks().forEach(track => track.stop()); // Libera mic
-        };
-
-        mediaRecorder.start();
-        gravando = true;
-        document.getElementById('audio-recorder').classList.add('recording');
-        
-        // Timer visual
-        let seg = 0;
-        intervaloGravacao = setInterval(() => {
-            seg++;
-            document.getElementById('record-timer').innerText = `00:${seg < 10 ? '0'+seg : seg}`;
-        }, 1000);
-
-    }).catch(e => showToast("Erro no Microfone: " + e, "error"));
-}
-
-function enviarAudio() {
-    if (mediaRecorder && gravando) {
-        mediaRecorder.stop();
-        cancelarGravacaoUI();
+function enviarP2P(destId, msg) {
+    const conn = conexoes[destId];
+    if (conn && conn.open) {
+        conn.send(msg);
+    } else {
+        // Tenta reconectar
+        const novaConn = peer.connect(destId);
+        novaConn.on('open', () => {
+            conexoes[destId] = novaConn;
+            novaConn.send(msg);
+        });
     }
 }
 
-function cancelarGravacao() {
-    if (mediaRecorder) {
-        mediaRecorder.stop();
-        audioChunks = []; // Descarta
-        cancelarGravacaoUI();
+function receberPacote(msg, senderId) {
+    // Salva no DB
+    salvarMsgDB(msg);
+
+    // Se estiver no chat aberto, mostra
+    if (chatAtual && chatAtual.id === msg.chatId) {
+        adicionarBalaoUI(msg, 'received');
+        rolarFim();
+    } else {
+        showToast(`Mensagem de ${msg.nomeRemetente}`, "success");
     }
 }
 
-function cancelarGravacaoUI() {
-    gravando = false;
-    clearInterval(intervaloGravacao);
-    document.getElementById('audio-recorder').classList.remove('recording');
-    document.getElementById('record-timer').innerText = "00:00";
-}
-
-// --- UI HELPERS ---
-
-function adicionarBalao(pacote, lado) {
+// --- INTERFACE ---
+function adicionarBalaoUI(msg, lado) {
     const area = document.getElementById('messages-area');
     const div = document.createElement('div');
-    div.className = 'msg ' + lado;
-
-    let conteudoHtml = '';
-
-    // Verifica Auto-Download (Se for recebido e config for false, mostra botão)
-    if (lado === 'received' && !config.autoDl && (pacote.type === 'image' || pacote.type === 'video')) {
-        // Lógica de "Clique para Baixar" (Simplificada: salva num atributo data e exibe botão)
-        conteudoHtml = `
-            <button onclick="baixarMidia(this, '${pacote.type}', '${pacote.content}')" style="background:#333;color:white;border:none;padding:10px;border-radius:5px">
-                ⬇ Baixar ${pacote.type}
-            </button>
-        `;
-    } else {
-        // Exibe direto
-        if (pacote.type === 'text') conteudoHtml = pacote.content;
-        if (pacote.type === 'image') conteudoHtml = `<img src="${pacote.content}" onclick="verFull(this.src)">`;
-        if (pacote.type === 'video') conteudoHtml = `<video src="${pacote.content}" controls></video>`;
-        if (pacote.type === 'audio') conteudoHtml = `<audio src="${pacote.content}" controls></audio>`;
+    div.className = `msg ${lado}`;
+    
+    let conteudoHtml = msg.conteudo;
+    
+    // Tratamento de Imagem
+    if(msg.tipo === 'image') {
+        conteudoHtml = `<img src="${msg.conteudo}" onclick="abrirImagem(this.src)">`;
     }
 
-    const hora = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    div.innerHTML = `${conteudoHtml} <span class="msg-time">${hora}</span>`;
+    // Bomba
+    if(msg.bomba) {
+        setTimeout(() => { div.innerHTML = "<i>Mensagem apagada</i>"; div.style.opacity = 0.5; }, 10000);
+        conteudoHtml += " <small>⏱ 10s</small>";
+    }
+
+    // Nome no Grupo
+    let header = "";
+    if(lado === 'received' && chatAtual.tipo === 'group') {
+        header = `<div style="font-size:0.8rem;color:orange;margin-bottom:2px">${msg.nomeRemetente}</div>`;
+    }
+
+    const hora = new Date(msg.data).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    div.innerHTML = `${header}${conteudoHtml}<span class="msg-time">${hora}</span>`;
     
     area.appendChild(div);
-    area.scrollTop = area.scrollHeight;
 }
 
-function baixarMidia(btn, tipo, content) {
-    // Substitui o botão pela mídia real
-    let html = '';
-    if (tipo === 'image') html = `<img src="${content}" onclick="verFull(this.src)">`;
-    if (tipo === 'video') html = `<video src="${content}" controls></video>`;
-    btn.parentNode.innerHTML = html + btn.parentNode.innerHTML.split('<span')[1]; // Mantém a hora
-}
-
-function toggleAnexos() {
-    const menu = document.getElementById('attach-menu');
-    menu.classList.toggle('open');
-}
-
-// --- PERFIL E CONFIGURAÇÕES ---
-
-function salvarPerfil() {
-    meuNome = document.getElementById('my-nickname').value;
-    localStorage.setItem('ghost_name', meuNome);
-    showToast("Nome salvo!", "success");
-}
-
-function mudarAvatar(input) {
-    const file = input.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            avatarBase64 = e.target.result;
-            localStorage.setItem('ghost_avatar', avatarBase64);
-            aplicarAvatar(avatarBase64);
-        };
-        reader.readAsDataURL(file);
-    }
-}
-
-function aplicarAvatar(base64) {
-    if(!base64) return;
-    document.getElementById('home-avatar').innerHTML = `<img src="${base64}">`;
-    document.getElementById('settings-avatar').innerHTML = `<img src="${base64}">`;
-}
-
-function mudarWallpaper(input) {
-    const file = input.files[0];
-    if(file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            localStorage.setItem('ghost_wallpaper', e.target.result);
-            aplicarWallpaper();
-        };
-        reader.readAsDataURL(file);
-    }
-}
-
-function aplicarWallpaper() {
-    const wp = localStorage.getItem('ghost_wallpaper');
-    if(wp) {
-        document.getElementById('chat-wallpaper').style.backgroundImage = `url(${wp})`;
-        document.getElementById('chat-wallpaper').style.opacity = '0.4';
-    }
-}
-
-function toggleAutoDownload(chk) {
-    config.autoDl = chk.checked;
-    localStorage.setItem('ghost_config', JSON.stringify(config));
-}
-
-// --- QR CODE ---
-function abrirQR() {
-    document.getElementById('modal-qr').classList.add('open');
-    document.getElementById('qrcode-container').innerHTML = '';
-    new QRCode(document.getElementById("qrcode-container"), {
-        text: meuId,
-        width: 200,
-        height: 200
+// --- GRUPOS (Lógica KMZ) ---
+function criarGrupo() {
+    const nome = document.getElementById('new-group-name').value;
+    // Pega membros selecionados
+    const checkboxes = document.querySelectorAll('.member-check:checked');
+    const membros = Array.from(checkboxes).map(cb => cb.value);
+    
+    if(!nome || membros.length === 0) return alert("Defina nome e membros");
+    
+    membros.push(meuId); // Eu sou membro
+    
+    const novoGrupo = {
+        id: "Group-" + Math.floor(Math.random() * 1000000),
+        name: nome,
+        membros: membros,
+        admin: meuId
+    };
+    
+    grupos.push(novoGrupo);
+    localStorage.setItem('kmz_groups', JSON.stringify(grupos));
+    
+    // Avisa os membros que o grupo foi criado (Protocolo simples)
+    membros.forEach(m => {
+        if(m !== meuId) {
+            enviarP2P(m, {
+                tipo: 'system_group_create',
+                grupo: novoGrupo
+            });
+        }
     });
+    
+    renderizarListas();
+    document.getElementById('modal-group').classList.remove('open');
 }
-function fecharModalQR() { document.getElementById('modal-qr').classList.remove('open'); }
 
-// --- GERENCIAMENTO DE CONTATOS (Resumido) ---
-function renderizarContatos() {
-    const lista = document.getElementById('contact-list');
-    lista.innerHTML = '';
+// --- LIGHTBOX (Imagem Cheia) ---
+function abrirImagem(src) {
+    const viewer = document.getElementById('image-viewer');
+    const img = document.getElementById('img-full');
+    img.src = src;
+    viewer.classList.add('active');
+}
+function fecharImagem() {
+    document.getElementById('image-viewer').classList.remove('active');
+}
+
+// --- ARQUIVOS ---
+const GerenciadorArquivos = {
+    selecionar: function(input) {
+        const file = input.files[0];
+        if(!file) return;
+        
+        // Se for imagem, converte pra base64 e exibe
+        if(file.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onload = e => enviarMensagem(e.target.result, 'image');
+            reader.readAsDataURL(file);
+        } else {
+            enviarMensagem(`Arquivo: ${file.name}`, 'text');
+        }
+        input.value = '';
+    }
+}
+
+// --- UTILITÁRIOS ---
+function renderizarListas() {
+    const listChats = document.getElementById('list-chats');
+    const listGroups = document.getElementById('list-groups');
+    const containerGroups = document.getElementById('groups-container');
+    
+    listChats.innerHTML = '';
+    containerGroups.innerHTML = '';
+
+    // Renderiza Contatos
     contatos.forEach(c => {
-        const div = document.createElement('div');
-        div.className = 'contact-item';
-        div.onclick = () => abrirChat(c.id, c.name);
-        div.innerHTML = `<div class="mini-avatar">${c.name[0]}</div> <div><b>${c.name}</b><br><small>${c.id.substring(0,8)}...</small></div>`;
-        lista.appendChild(div);
+        const d = document.createElement('div');
+        d.className = 'contact-item';
+        d.onclick = () => abrirChat(c.id, c.name, 'p2p');
+        d.innerHTML = `<div class="item-avatar">${c.name[0]}</div><div class="item-info"><h4>${c.name}</h4><p>Toque para conversar</p></div>`;
+        listChats.appendChild(d);
     });
+
+    // Renderiza Grupos
+    grupos.forEach(g => {
+        const d = document.createElement('div');
+        d.className = 'contact-item';
+        d.onclick = () => abrirChat(g.id, g.name, 'group');
+        d.innerHTML = `<div class="item-avatar" style="background:orange"><i class="material-icons">group</i></div><div class="item-info"><h4>${g.name}</h4><p>${g.membros.length} membros</p></div>`;
+        containerGroups.appendChild(d);
+    });
+}
+
+function abrirChat(id, nome, tipo) {
+    chatAtual = { id, name: nome, tipo };
+    document.getElementById('current-chat-name').innerText = nome;
+    document.getElementById('current-chat-status').innerText = tipo === 'group' ? 'Grupo KMZ' : 'Online';
+    carregarHistorico(id);
+    trocarTela('view-chat');
+}
+
+function mostrarModalGrupo() {
+    const container = document.getElementById('group-members-selection');
+    container.innerHTML = '';
+    contatos.forEach(c => {
+        container.innerHTML += `<div class="checkbox-item"><input type="checkbox" class="member-check" value="${c.id}"> ${c.name}</div>`;
+    });
+    document.getElementById('modal-group').classList.add('open');
+}
+
+// Navegação
+function mudarAba(aba) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.list-container').forEach(l => l.style.display = 'none');
+    
+    if(aba === 'chats') {
+        document.querySelector('.tab:nth-child(1)').classList.add('active');
+        document.getElementById('list-chats').style.display = 'block';
+    } else {
+        document.querySelector('.tab:nth-child(2)').classList.add('active');
+        document.getElementById('list-groups').style.display = 'block';
+    }
 }
 
 function salvarNovoContato() {
     const n = document.getElementById('new-contact-name').value;
     const i = document.getElementById('new-contact-id').value;
-    if(n && i) {
-        contatos.push({name:n, id:i});
-        localStorage.setItem('ghost_contacts', JSON.stringify(contatos));
-        renderizarContatos();
-        fecharModalAdd();
-    }
+    contatos.push({name:n, id:i});
+    localStorage.setItem('kmz_contacts', JSON.stringify(contatos));
+    renderizarListas();
+    fecharModalAdd();
 }
 
-function abrirChat(id, nome) {
-    contatoAtual = {id, name: nome};
-    document.getElementById('current-chat-name').innerText = nome;
-    document.getElementById('messages-area').innerHTML = '';
-    conectar(id);
-    trocarTela('view-chat');
-}
-
-// --- UTILS ---
-function voltarHome() { contatoAtual = null; trocarTela('view-home'); }
-function trocarTela(id) {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
-}
-function showToast(msg, type) {
-    const t = document.createElement('div');
-    t.className = `toast ${type}`; t.innerText = msg;
-    document.getElementById('toast-container').appendChild(t);
-    setTimeout(() => t.remove(), 3000);
-}
-function obterNome(id) { 
-    const c = contatos.find(x => x.id === id);
-    return c ? c.name : "Desconhecido";
-}
-function copiarID() { navigator.clipboard.writeText(meuId); showToast("Copiado!", "success"); }
+// Helpers Básicos
+function trocarTela(id) { document.querySelectorAll('.view').forEach(v => v.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function voltarHome() { chatAtual = null; trocarTela('view-home'); }
 function mostrarModalAdd() { document.getElementById('modal-add').classList.add('open'); }
 function fecharModalAdd() { document.getElementById('modal-add').classList.remove('open'); }
-function abrirConfig() { trocarTela('view-settings'); }
-function adicionarEuMesmo() { document.getElementById('new-contact-id').value = meuId; document.getElementById('new-contact-name').value = "Eu"; }
-function limparChatAtual() { document.getElementById('messages-area').innerHTML = ''; }
-function verFull(src) { window.open("").document.write(`<img src="${src}" style="width:100%">`); }
-function toggleTema(chk) { 
-    if(!chk.checked) document.body.style.filter = "invert(1)"; // Simples light mode hack
-    else document.body.style.filter = "none";
-}
+function showToast(msg) { const t = document.createElement('div'); t.className='toast'; t.innerText=msg; document.getElementById('toast-container').appendChild(t); setTimeout(()=>t.remove(), 3000); }
+function toggleModoBomba() { modoBomba = !modoBomba; document.getElementById('btn-bomb').style.color = modoBomba ? 'red' : 'inherit'; showToast(modoBomba ? "Modo Espião Ativado" : "Modo Normal"); }
+function rolarFim() { const area = document.getElementById('messages-area'); area.scrollTop = area.scrollHeight; }
+
+init();
