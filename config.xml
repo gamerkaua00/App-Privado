@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.kaua.messenger" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    <name>GhostMsg</name>
+    <description>Mensageiro P2P Privado</description>
+    <author email="kaua@exemplo.com" href="http://github.com/kaua">Kauã Mazur</author>
+    <content src="index.html" />
+    <access origin="*" />
+    
+    <icon src="icon.png" />
+
+    <preference name="SplashScreenDelay" value="0"/>
+    <preference name="AutoHideSplashScreen" value="true"/>
+    <preference name="ShowSplashScreen" value="false"/>
+    
+    <preference name="StatusBarOverlaysWebView" value="false" />
+    <preference name="StatusBarBackgroundColor" value="#000000" />
+</widget>
