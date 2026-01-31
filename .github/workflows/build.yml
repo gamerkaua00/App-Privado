@@ -13,11 +13,11 @@ jobs:
       - name: Checkout do Código
         uses: actions/checkout@v3
 
-      - name: Configurar Java
+      - name: Configurar Java (Atualizado para v17)
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '17'
 
       - name: Configurar Node.js
         uses: actions/setup-node@v3
@@ -30,11 +30,17 @@ jobs:
       - name: Criar Projeto Cordova
         run: |
           cordova create temp_app com.kaua.messenger GhostMsg
+          # Copia os arquivos do seu repositório para a pasta do Cordova
           cp -r www/* temp_app/www/
           cp config.xml temp_app/
           cp icon.png temp_app/
+          
           cd temp_app
+          
+          # Adiciona plataforma Android
           cordova platform add android
+          
+          # Compila o APK (Debug)
           cordova build android --debug
 
       - name: Upload do APK
