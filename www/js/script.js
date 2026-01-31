@@ -1,133 +1,215 @@
-// --- CONFIGURAÇÃO INICIAL ---
+// --- DADOS E VARIÁVEIS ---
+let meuId = localStorage.getItem('ghost_my_id');
+let meuNick = localStorage.getItem('ghost_my_nick') || "Eu";
+let contatos = JSON.parse(localStorage.getItem('ghost_contacts') || "[]");
+let contatoAtual = null; // ID de quem estou conversando agora
+let peer = null;
+let conexoes = {}; // Guarda as conexões ativas
 
-// Gera um ID aleatório simples (ex: User-4821)
-// Em produção, isso seria uma chave pública complexa
-const myId = "Ghost-" + Math.floor(Math.random() * 9999);
-let conn = null;
+// --- INICIALIZAÇÃO ---
 
-// Inicializa o PeerJS (Servidor de sinalização público gratuito)
-const peer = new Peer(myId);
-
-// Elementos da DOM
-const statusDot = document.getElementById('connection-status');
-const idDisplay = document.getElementById('my-id-display');
-const chatBox = document.getElementById('chat-box');
-const sendBtn = document.getElementById('send-btn');
-const msgInput = document.getElementById('msg-input');
-const destInput = document.getElementById('dest-id');
-
-// --- EVENTOS DO PEER (REDE) ---
-
-// 1. Quando eu me conecto à rede
-peer.on('open', (id) => {
-    console.log('Meu ID P2P:', id);
-    idDisplay.innerText = "Meu ID: " + id;
-    statusDot.style.backgroundColor = "#00ff88"; // Verde Neon (Online)
-    statusDot.style.boxShadow = "0 0 8px #00ff88";
-    adicionarMsgSistema("Você está online. Compartilhe seu ID.");
-});
-
-// 2. Quando ALGUÉM se conecta a mim
-peer.on('connection', (connection) => {
-    conn = connection;
-    configurarConexao();
-    adicionarMsgSistema("Alguém se conectou a você!");
-    // Preenche automaticamente o ID de quem chamou no campo
-    destInput.value = conn.peer;
-});
-
-// 3. Tratamento de Erros
-peer.on('error', (err) => {
-    console.error(err);
-    adicionarMsgSistema("Erro de conexão: " + err.type);
-    statusDot.style.backgroundColor = "#ff3e3e"; // Vermelho
-});
-
-// --- FUNÇÕES DE MENSAGEM ---
-
-// Função para iniciar conexão ativa (Eu chamo o amigo)
-function conectarAoAmigo() {
-    const amigoId = destInput.value.trim();
-    if (!amigoId) return alert("Digite o ID do amigo!");
-    
-    // Conecta
-    conn = peer.connect(amigoId);
-    configurarConexao();
+// 1. Gera ID fixo se não existir
+if (!meuId) {
+    meuId = "Ghost-" + Math.floor(Math.random() * 999999);
+    localStorage.setItem('ghost_my_id', meuId);
 }
 
-// Configura os ouvintes da conexão (para receber dados)
-function configurarConexao() {
-    if(!conn) return;
+// 2. Aplica Tema Salvo
+const temaSalvo = localStorage.getItem('ghost_theme');
+if (temaSalvo) document.body.className = temaSalvo;
 
-    conn.on('open', () => {
-        adicionarMsgSistema("Conexão segura estabelecida.");
+// 3. Inicia P2P
+iniciarPeer();
+renderizarContatos();
+document.getElementById('my-nickname').value = meuNick;
+document.getElementById('my-id-display').innerText = meuId;
+
+// --- FUNÇÕES DE NAVEGAÇÃO ---
+
+function irParaChat(contactId, contactName) {
+    contatoAtual = { id: contactId, name: contactName };
+    document.getElementById('current-chat-name').innerText = contactName;
+    document.getElementById('current-chat-id').innerText = contactId;
+    
+    // Tenta conectar se não estiver conectado
+    if (!conexoes[contactId]) {
+        conectarP2P(contactId);
+    }
+
+    trocarTela('view-chat');
+    document.getElementById('messages-area').innerHTML = '<div class="msg received" style="background:transparent; text-align:center; opacity:0.5; width:100%">Início da conversa criptografada</div>';
+}
+
+function voltarHome() {
+    contatoAtual = null;
+    trocarTela('view-home');
+}
+
+function abrirConfig() {
+    trocarTela('view-settings');
+}
+
+function trocarTela(telaId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(telaId).classList.add('active');
+}
+
+// --- LÓGICA DE CONTATOS ---
+
+function renderizarContatos() {
+    const lista = document.getElementById('contact-list');
+    lista.innerHTML = '';
+
+    if (contatos.length === 0) {
+        lista.innerHTML = '<div class="empty-state" style="text-align:center; padding:20px; opacity:0.6">Nenhum contato salvo.<br>Toque no +</div>';
+        return;
+    }
+
+    contatos.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'contact-item';
+        item.onclick = () => irParaChat(c.id, c.name);
+        
+        // Avatar com inicial
+        const inicial = c.name.charAt(0).toUpperCase();
+        
+        item.innerHTML = `
+            <div class="avatar">${inicial}</div>
+            <div class="contact-info">
+                <strong>${c.name}</strong>
+                <small>${c.id}</small>
+            </div>
+        `;
+        lista.appendChild(item);
     });
+}
+
+function salvarNovoContato() {
+    const nome = document.getElementById('new-contact-name').value;
+    const id = document.getElementById('new-contact-id').value;
+
+    if (nome && id) {
+        contatos.push({ name: nome, id: id });
+        localStorage.setItem('ghost_contacts', JSON.stringify(contatos));
+        renderizarContatos();
+        fecharModalAdd();
+        // Limpa inputs
+        document.getElementById('new-contact-name').value = '';
+        document.getElementById('new-contact-id').value = '';
+    } else {
+        alert("Preencha nome e ID!");
+    }
+}
+
+// --- REDE P2P (PEERJS) ---
+
+function iniciarPeer() {
+    peer = new Peer(meuId);
+
+    peer.on('open', (id) => {
+        console.log("Conectado na rede global como: " + id);
+    });
+
+    peer.on('connection', (conn) => {
+        setupConexao(conn);
+        alert("Nova conexão recebida!");
+    });
+
+    peer.on('error', (err) => {
+        if(err.type === 'peer-unavailable') {
+           // Ignora erro se usuário estiver offline, mensagem será tentada dps
+        }
+        console.error(err);
+    });
+}
+
+function conectarP2P(destId) {
+    const conn = peer.connect(destId);
+    setupConexao(conn);
+}
+
+function setupConexao(conn) {
+    conexoes[conn.peer] = conn;
 
     conn.on('data', (data) => {
-        // AQUI ENTRA A DESCRIPTOGRAFIA (Se implementada)
-        mostrarMensagem(data, 'received');
+        // Se a mensagem for de quem estou conversando agora, mostra na tela
+        if (contatoAtual && contatoAtual.id === conn.peer) {
+            adicionarBalao(data, 'received');
+        } else {
+            // Se não, poderia mostrar notificação (feature futura)
+            alert("Msg de " + conn.peer);
+        }
     });
+    
+    // Atualiza status se estiver no chat
+    if(contatoAtual && contatoAtual.id === conn.peer) {
+        document.getElementById('current-chat-id').innerText = "Conectado";
+    }
 }
 
-// Função de Enviar
+// --- MENSAGENS ---
+
 function enviarMensagem() {
-    const texto = msgInput.value.trim();
-    const amigoId = destInput.value.trim();
+    const input = document.getElementById('msg-input');
+    const texto = input.value.trim();
+    
+    if (!texto || !contatoAtual) return;
 
-    if (!texto) return;
-
-    // Se não tem conexão ativa mas tem ID, tenta conectar
-    if (!conn && amigoId) {
-        conectarAoAmigo();
-        // Pequeno delay para dar tempo de conectar
-        setTimeout(() => enviarEfetivo(texto), 1000);
-    } else if (conn) {
-        enviarEfetivo(texto);
-    } else {
-        alert("Preencha o ID do destinatário!");
-    }
-}
-
-function enviarEfetivo(texto) {
+    const conn = conexoes[contatoAtual.id];
+    
     if (conn && conn.open) {
-        conn.send(texto); // Envia para o outro peer
-        mostrarMensagem(texto, 'sent'); // Mostra na minha tela
-        msgInput.value = ''; // Limpa o campo
-        chatBox.scrollTop = chatBox.scrollHeight; // Rola para baixo
+        conn.send(texto);
+        adicionarBalao(texto, 'sent');
+        input.value = '';
     } else {
-        adicionarMsgSistema("Erro: Não conectado.");
+        // Tenta reconectar e enviar
+        conectarP2P(contatoAtual.id);
+        setTimeout(() => {
+             // Tenta de novo após 1s
+             const novaConn = conexoes[contatoAtual.id];
+             if(novaConn && novaConn.open) {
+                 novaConn.send(texto);
+                 adicionarBalao(texto, 'sent');
+                 input.value = '';
+             } else {
+                 alert("Usuário offline ou ID incorreto.");
+             }
+        }, 1500);
     }
 }
 
-// --- FUNÇÕES VISUAIS ---
-
-function mostrarMensagem(msg, tipo) {
+function adicionarBalao(texto, tipo) {
+    const area = document.getElementById('messages-area');
     const div = document.createElement('div');
     div.className = 'msg ' + tipo;
-    div.innerText = msg;
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    div.innerText = texto;
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
 }
 
-function adicionarMsgSistema(msg) {
-    const div = document.createElement('div');
-    div.className = 'system-msg';
-    div.innerText = msg;
-    chatBox.appendChild(div);
+// --- SETTINGS E UTILITÁRIOS ---
+
+function salvarNickname() {
+    const novoNick = document.getElementById('my-nickname').value;
+    if(novoNick) {
+        localStorage.setItem('ghost_my_nick', novoNick);
+        meuNick = novoNick;
+        alert("Nome salvo!");
+    }
 }
 
-// Função extra: Clique no ID para copiar
+function mudarTema(nomeTema) {
+    document.body.className = ''; // Reseta
+    if (nomeTema === 'zap') document.body.classList.add('theme-zap');
+    if (nomeTema === 'matrix') document.body.classList.add('theme-matrix');
+    localStorage.setItem('ghost_theme', document.body.className);
+}
+
 function copiarID() {
-    navigator.clipboard.writeText(myId).then(() => {
-        alert("ID copiado: " + myId);
-    });
+    navigator.clipboard.writeText(meuId);
+    alert("ID Copiado para área de transferência!");
 }
 
-// --- GATILHOS DE BOTÃO ---
-
-sendBtn.addEventListener('click', enviarMensagem);
-
-// Enviar com Enter
-msgInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') enviarMensagem();
-});
+// Modais
+function mostrarModalAdd() { document.getElementById('modal-add').classList.add('open'); }
+function fecharModalAdd() { document.getElementById('modal-add').classList.remove('open'); }
