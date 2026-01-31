@@ -1,4 +1,4 @@
-name: Build GhostMsg V10 (Estável)
+name: Build GhostMsg V11 (Golden Era)
 
 on:
   push:
@@ -14,78 +14,83 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout do Código
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Configurar Java 17
+      - name: Setup Java 11 (Clássico)
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '11'
 
-      - name: Configurar Node.js 18
+      - name: Setup Node 16 (Estável)
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '16'
 
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Construir App (Modo Compatibilidade)
+      - name: Construir App
         run: |
           echo ">>> 1. Criando Projeto..."
           cordova create temp_app com.kaua.messenger "GhostMsg"
           cd temp_app
           
-          echo ">>> 2. Adicionando Plataforma Android 12 (ESTÁVEL)..."
-          # O SEGREDO: Usamos a v12.0.0 para aceitar plugins antigos
-          cordova platform add android@12.0.0
+          echo ">>> 2. Adicionando Android 11 (Compatibilidade Máxima)..."
+          # Versão 11 aceita todos os plugins sem choro
+          cordova platform add android@11.0.0
 
-          echo ">>> 3. Adicionando Plugins..."
-          # Agora que a plataforma existe, adicionamos os plugins
+          echo ">>> 3. Instalando Plugins..."
+          # Este plugin evita erros de compilação misturando bibliotecas
+          cordova plugin add cordova-plugin-androidx-adapter
+          
           cordova plugin add cordova-plugin-android-permissions
           cordova plugin add cordova-plugin-background-mode
           cordova plugin add cordova-plugin-file
           cordova plugin add cordova-plugin-splashscreen
-          # Fix para notificação
-          cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
+          cordova plugin add cordova-plugin-local-notification
 
           echo ">>> 4. Copiando Arquivos KMZ..."
           rm -rf www/*
           cp -r ../www/* www/
           if [ -f "../icon.png" ]; then cp ../icon.png www/icon.png; fi
 
-          echo ">>> 5. Configurando XML (Sem Robô)..."
-          # Configurações para matar o splash screen
+          echo ">>> 5. Matando o Robô do Splash..."
+          # No Android 11, essas configs funcionam perfeitamente
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
+          sed -i '/<\/widget>/i \    <preference name="AutoHideSplashScreen" value="true" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
+          sed -i '/<\/widget>/i \    <preference name="SplashMaintainAspectRatio" value="true" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff111b21" />' config.xml
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
           echo ">>> 6. COMPILANDO..."
+          # --release geralmente é mais otimizado, mas vamos de debug para garantir que assina sozinho
           cordova build android --debug -- --packageType=apk
 
       - name: Rastrear APK
         run: |
-          echo "Procurando APK..."
-          find temp_app -name "*.apk"
+          echo ">>> Procurando APK..."
           APK_PATH=$(find temp_app -name "*.apk" -type f | head -n 1)
           
           if [ -z "$APK_PATH" ]; then
-            echo "❌ ERRO: APK não gerado."
+            echo "❌ ERRO: APK não gerado. Logs abaixo:"
+            ls -R temp_app
             exit 1
           fi
           
-          cp "$APK_PATH" GhostMsg-V10.apk
+          echo "✅ APK ENCONTRADO: $APK_PATH"
+          cp "$APK_PATH" GhostMsg-V11.apk
 
       - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v10.0-stable
-          name: "GhostMsg V10 (Android 12 Engine)"
-          body: "Versão com motor Android 12 para compatibilidade total de plugins."
-          files: GhostMsg-V10.apk
+          tag_name: v11.0-golden
+          name: "GhostMsg V11 (Golden Build)"
+          body: "Versão construída sobre Android 11 para estabilidade total de plugins."
+          files: GhostMsg-V11.apk
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
