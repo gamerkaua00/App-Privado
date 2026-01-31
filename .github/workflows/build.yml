@@ -1,14 +1,10 @@
-name: Build GhostMsg V12 (Diamond Fix)
+name: Build GhostMsg V13 (Nuclear Patch)
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
-# ISSO AQUI CONSERTA TUDO: Forçamos o Gradle 8.0 que é compatível com tudo
-env:
-  CORDOVA_ANDROID_GRADLE_DISTRIBUTION_URL: https://services.gradle.org/distributions/gradle-8.0-all.zip
 
 permissions:
   contents: write
@@ -21,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Setup Java 17 (Obrigatório agora)
+      - name: Setup Java 17
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
@@ -35,24 +31,21 @@ jobs:
       - name: Instalar Cordova
         run: npm install -g cordova
 
-      - name: Construir App
+      - name: Construir e Consertar (Passo a Passo)
         run: |
           echo ">>> 1. Criando Projeto..."
           cordova create temp_app com.kaua.messenger "GhostMsg"
           cd temp_app
           
-          echo ">>> 2. Adicionando Android 12 (Compatível)..."
+          echo ">>> 2. Adicionando Android 12..."
           cordova platform add android@12.0.0
 
           echo ">>> 3. Instalando Plugins..."
-          # AndroidX Adapter evita conflitos de bibliotecas
           cordova plugin add cordova-plugin-androidx-adapter
-          
           cordova plugin add cordova-plugin-android-permissions
           cordova plugin add cordova-plugin-background-mode
           cordova plugin add cordova-plugin-file
           cordova plugin add cordova-plugin-splashscreen
-          # Fix para notificação
           cordova plugin add cordova-plugin-local-notification --variable ANDROIDX_VERSION=1.+
 
           echo ">>> 4. Copiando Arquivos KMZ..."
@@ -60,38 +53,40 @@ jobs:
           cp -r ../www/* www/
           if [ -f "../icon.png" ]; then cp ../icon.png www/icon.png; fi
 
-          echo ">>> 5. Matando o Robô do Splash..."
+          echo ">>> 5. Configurando XML..."
           sed -i '/<\/widget>/i \    <preference name="ShowSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="SplashScreenDelay" value="0" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="AutoHideSplashScreen" value="true" />' config.xml
-          sed -i '/<\/widget>/i \    <preference name="FadeSplashScreen" value="false" />' config.xml
           sed -i '/<\/widget>/i \    <preference name="BackgroundColor" value="0xff111b21" />' config.xml
           sed -i '/<\/widget>/i \    <icon src="www/icon.png" />' config.xml
 
-          echo ">>> 6. COMPILANDO (Com Gradle 8.0)..."
-          # O build vai baixar o Gradle 8.0 automaticamente por causa da variável lá em cima
+          echo ">>> 6. ☢️ APLICANDO CORREÇÃO NUCLEAR (FIX GRADLE 9) ☢️..."
+          # Aqui está o segredo: Editamos o arquivo cordova.gradle para corrigir o erro XmlParser
+          cd platforms/android/CordovaLib
+          sed -i 's/new XmlParser()/new groovy.xml.XmlParser()/g' cordova.gradle
+          cd ../../..
+
+          echo ">>> 7. COMPILANDO..."
+          # Agora o arquivo já está corrigido e o build deve passar
           cordova build android --debug -- --packageType=apk
 
       - name: Rastrear APK
         run: |
-          echo ">>> Procurando APK..."
           APK_PATH=$(find temp_app -name "*.apk" -type f | head -n 1)
-          
           if [ -z "$APK_PATH" ]; then
-            echo "❌ ERRO: APK não gerado. Verifique os logs acima."
+            echo "❌ ERRO: APK não gerado."
             exit 1
           fi
-          
           echo "✅ APK ENCONTRADO: $APK_PATH"
-          cp "$APK_PATH" GhostMsg-V12.apk
+          cp "$APK_PATH" GhostMsg-V13.apk
 
       - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v12.0-diamond
-          name: "GhostMsg V12 (Fixed Gradle)"
-          body: "Versão com correção definitiva do motor de build (Gradle 8.0 + Java 17)."
-          files: GhostMsg-V12.apk
+          tag_name: v13.0-nuclear
+          name: "GhostMsg V13 (Gradle 9 Fix)"
+          body: "Versão com patch manual para suportar a atualização do GitHub (Gradle 9.3)."
+          files: GhostMsg-V13.apk
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
