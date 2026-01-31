@@ -3,31 +3,90 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width">
-    
-    <title>GhostMsg</title>
-
+    <title>GhostMsg 2.0</title>
     <link rel="stylesheet" href="css/style.css">
-
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
 <body>
 
-    <div id="header">
-        <div class="logo-area">
-            <span class="status-dot" id="connection-status"></span> GhostMsg
+    <div id="view-home" class="view active">
+        <div class="header">
+            <span class="app-title">GhostMsg</span>
+            <div class="actions">
+                <i class="material-icons" onclick="abrirConfig()">settings</i>
+            </div>
         </div>
-        <div id="my-id-display" onclick="copiarID()">Gerando ID...</div>
+        
+        <div id="contact-list">
+            <div class="empty-state">Nenhum contato salvo.<br>Toque no + para adicionar.</div>
+        </div>
+
+        <button class="fab" onclick="mostrarModalAdd()">
+            <i class="material-icons">add</i>
+        </button>
     </div>
 
-    <div id="chat-box">
-        <div class="system-msg">Bem-vindo à rede segura.</div>
+    <div id="view-chat" class="view">
+        <div class="header chat-header">
+            <i class="material-icons back-btn" onclick="voltarHome()">arrow_back</i>
+            <div class="chat-info">
+                <div class="chat-name" id="current-chat-name">Nome do Amigo</div>
+                <div class="chat-status" id="current-chat-id">Desconectado</div>
+            </div>
         </div>
 
-    <div id="input-area">
-        <input type="text" id="dest-id" placeholder="ID do Destinatário" autocomplete="off">
-        <input type="text" id="msg-input" placeholder="Digite sua mensagem..." autocomplete="off">
-        <button id="send-btn">Enviar</button>
+        <div id="messages-area">
+            </div>
+
+        <div class="input-area">
+            <input type="text" id="msg-input" placeholder="Mensagem..." autocomplete="off">
+            <button class="send-btn" onclick="enviarMensagem()">
+                <i class="material-icons">send</i>
+            </button>
+        </div>
+    </div>
+
+    <div id="view-settings" class="view">
+        <div class="header">
+            <i class="material-icons back-btn" onclick="voltarHome()">arrow_back</i>
+            <span>Configurações</span>
+        </div>
+        <div class="settings-content">
+            <div class="card">
+                <h3>Meu Perfil</h3>
+                <label>Meu Apelido</label>
+                <input type="text" id="my-nickname" placeholder="Seu Nome">
+                <button onclick="salvarNickname()">Salvar Nome</button>
+                
+                <hr>
+                
+                <label>Meu ID Privado (Toque para copiar)</label>
+                <div id="my-id-display" onclick="copiarID()">Carregando...</div>
+            </div>
+
+            <div class="card">
+                <h3>Aparência</h3>
+                <div class="theme-options">
+                    <button class="theme-btn" onclick="mudarTema('cyber')" style="background:#0d1117; color:#58a6ff">Cyber</button>
+                    <button class="theme-btn" onclick="mudarTema('zap')" style="background:#00a884; color:white">Zap</button>
+                    <button class="theme-btn" onclick="mudarTema('matrix')" style="background:black; color:#0f0">Matrix</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-add" class="modal">
+        <div class="modal-content">
+            <h3>Novo Contato</h3>
+            <input type="text" id="new-contact-name" placeholder="Nome (ex: João)">
+            <input type="text" id="new-contact-id" placeholder="Cole o ID dele aqui">
+            <div class="modal-actions">
+                <button onclick="fecharModalAdd()" class="btn-cancel">Cancelar</button>
+                <button onclick="salvarNovoContato()" class="btn-save">Salvar</button>
+            </div>
+        </div>
     </div>
 
     <script src="js/script.js"></script>
